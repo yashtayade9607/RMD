@@ -36,7 +36,22 @@ app.setNotFoundHandler((request, reply) => {
   reply.code(404).send({ error: `Route ${request.method} ${request.url} not found.` });
 });
 
-await app.register(cors, { origin: true });
+// Only allow requests from Electron (origin: null) or local-network addresses.
+// Prevents browser-tab websites from probing localhost:3780 and detecting Deskly
+// is running (CORS-RFC1918 port-scan mitigation).
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // Electron sends no Origin header — always allow.
+    if (!origin || origin === "null") return cb(null, true);
+    // Allow local-network origins: localhost, 127.x, 192.168.x, 10.x, 172.16-31.x
+    const localPattern = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/;
+    if (localPattern.test(origin)) return cb(null, true);
+    // All other origins (public websites in browser tabs) are rejected
+    app.log.warn(`[CORS] Blocked request from public origin: ${origin}`);
+    cb(new Error(`Origin ${origin} not allowed`), false);
+  },
+  credentials: false,
+});
 await app.register(websocket);
 await registerRoutes(app);
 attachSignaling(app);
