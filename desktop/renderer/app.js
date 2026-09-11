@@ -1418,14 +1418,15 @@ window.addEventListener("keydown", (ev) => {
   const target = ev.target;
   const isInputFocused = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
 
-  // ONLY HOST can trigger :qw / :qe command sequence
+  // ONLY HOST can trigger :qw / :qe command sequence.
+  // Only intercept keys when actively composing a command (state.cmd is non-empty)
+  // OR when ':' is pressed outside an input to start one.
   if (state.role === "host") {
-    if (!isInputFocused && (state.cmd.length || ev.key === ":")) {
+    if (!isInputFocused && state.cmd.length > 0) {
+      // We are mid-command — intercept everything until resolved or cleared
       ev.preventDefault();
       ev.stopPropagation();
-      if (ev.key === ":") {
-        state.cmd = ":";
-      } else if (ev.key === "Escape") {
+      if (ev.key === "Escape") {
         state.cmd = "";
       } else if (ev.key === "Enter") {
         localCommand(state.cmd.slice(1));
@@ -1445,10 +1446,23 @@ window.addEventListener("keydown", (ev) => {
       if (cmdText) cmdText.textContent = state.cmd.slice(1);
       return;
     }
+
+    // Start command mode when ':' is pressed outside an input
+    if (!isInputFocused && ev.key === ":") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      state.cmd = ":";
+      $("local-cmd")?.classList.remove("hidden");
+      const cmdText = $("local-cmd-text");
+      if (cmdText) cmdText.textContent = "";
+      return;
+    }
+
+    // Host does not forward any other keys — just don't touch them
     return;
   }
 
-  // CONTROLLER handling: controller NEVER controls pause/resume, and remote typing is blocked if paused by host
+  // CONTROLLER handling: controller NEVER controls pause/resume, input is blocked if host paused it
   if (state.role !== "controller") return;
   if (state.remoteInputPaused) return;
   if (WIN_CODES.has(ev.code) || ev.key === "Meta") { ev.preventDefault(); return; }
