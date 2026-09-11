@@ -560,7 +560,7 @@ async function logout() {
 }
 
 $("btn-logout").onclick = logout;
-$("btn-stop-host").onclick = logout;
+if ($("btn-stop-host")) $("btn-stop-host").onclick = logout;
 
 $("btn-change-password").onclick = async () => {
   const message = $("change-password-msg");
