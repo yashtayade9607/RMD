@@ -1227,8 +1227,8 @@ function updateInputPill() {
     el.textContent = state.remoteInputPaused ? "Remote BLOCKED" : "Remote ON";
     el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
     el.title = state.remoteInputPaused
-      ? "Remote controller input is blocked. Click or press :qe (or Ctrl+Alt+E) to resume."
-      : "Remote controller input is active. Click or press :qw (or Ctrl+Alt+Q) to pause.";
+      ? "Remote controller input is blocked. Click or press :qe to resume."
+      : "Remote controller input is active. Click or press :qw to pause.";
     el.style.cursor = "pointer";
   } else {
     el.textContent = state.remoteInputPaused ? "Host BLOCKED" : "Input ON";
@@ -1242,21 +1242,22 @@ function hostPauseRemoteInput() {
   if (state.role !== "host") return;
   if (state.remoteInputPaused) return;
   state.remoteInputPaused = true;
-  log("info", "Host", "Host blocked remote input via :qw / shortcut");
+  log("info", "Host", "Host blocked remote input via :qw");
   dcSend({ t: "input-feedback", paused: true });
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED (:qw / Ctrl+Alt+Q)");
+  setSessionFeedback("⛔ Remote input BLOCKED (:qw)");
   window.deskly?.setRemoteInputPausedState?.(true);
+  window.deskly?.releaseModifiers?.();
 }
 
 function hostResumeRemoteInput() {
   if (state.role !== "host") return;
   if (!state.remoteInputPaused) return;
   state.remoteInputPaused = false;
-  log("info", "Host", "Host resumed remote input via :qe / shortcut");
+  log("info", "Host", "Host resumed remote input via :qe");
   dcSend({ t: "input-feedback", paused: false });
   updateInputPill();
-  setSessionFeedback("✅ Remote input RESUMED (:qe / Ctrl+Alt+E)");
+  setSessionFeedback("✅ Remote input RESUMED (:qe)");
   window.deskly?.setRemoteInputPausedState?.(false);
 }
 
@@ -1417,15 +1418,8 @@ window.addEventListener("keydown", (ev) => {
   const target = ev.target;
   const isInputFocused = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
 
-  // ONLY HOST can trigger hotkeys and :qw / :qe command sequence
+  // ONLY HOST can trigger :qw / :qe command sequence
   if (state.role === "host") {
-    if (ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
-      ev.preventDefault();
-      if (ev.code === "KeyQ") hostPauseRemoteInput();
-      else hostResumeRemoteInput();
-      return;
-    }
-
     if (!isInputFocused && (state.cmd.length || ev.key === ":")) {
       ev.preventDefault();
       ev.stopPropagation();

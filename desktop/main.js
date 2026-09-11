@@ -103,7 +103,7 @@ function updateTrayMenu() {
     items.push(
       { type: "separator" },
       {
-        label: isHostInputPaused ? "Resume Remote Input (:qe / Ctrl+Alt+E)" : "Pause Remote Input (:qw / Ctrl+Alt+Q)",
+        label: isHostInputPaused ? "Resume Remote Input (:qe)" : "Pause Remote Input (:qw)",
         click: () => {
           isHostInputPaused = !isHostInputPaused;
           mainWindow?.webContents.send("deskly:hotkey", isHostInputPaused ? "pause" : "resume");
@@ -211,17 +211,8 @@ function applyRoleShortcuts() {
   globalShortcut.unregisterAll();
   if (input.stopHostKeyWatcher) input.stopHostKeyWatcher();
 
-  // ONLY HOST can control pause/resume! Controller must NEVER control it.
+  // ONLY HOST can control pause/resume via :qw / :qe. Controller has NO shortcuts.
   if (currentRole === "host") {
-    globalShortcut.register("CommandOrControl+Alt+Q", () => {
-      writeLog("info", "Main", "Host triggered pause via shortcut Ctrl+Alt+Q");
-      mainWindow?.webContents.send("deskly:hotkey", "pause");
-    });
-    globalShortcut.register("CommandOrControl+Alt+E", () => {
-      writeLog("info", "Main", "Host triggered resume via shortcut Ctrl+Alt+E");
-      mainWindow?.webContents.send("deskly:hotkey", "resume");
-    });
-
     // Start background key watcher for physical :qw and :qe key sequence on the Host PC
     if (input.startHostKeyWatcher) {
       input.startHostKeyWatcher((action) => {
@@ -246,6 +237,15 @@ app.on("will-quit", () => {
   if (cursorTimer) clearInterval(cursorTimer);
   if (input.stopHostKeyWatcher) input.stopHostKeyWatcher();
   writeLog("info", "Main", "Deskly closing");
+});
+
+ipcMain.handle("deskly:release-modifiers", () => {
+  try {
+    input.releaseAllModifiers();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 ipcMain.handle("deskly:set-paused-state", (_evt, paused) => {

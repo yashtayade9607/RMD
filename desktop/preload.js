@@ -27,4 +27,5 @@ contextBridge.exposeInMainWorld("deskly", {
   clearLogs: () => ipcRenderer.invoke("deskly:clear-logs"),
   setRemoteInputPausedState: (paused) => ipcRenderer.invoke("deskly:set-paused-state", paused),
   setActiveRole: (role) => ipcRenderer.invoke("deskly:set-active-role", role),
+  releaseModifiers: () => ipcRenderer.invoke("deskly:release-modifiers"),
 });

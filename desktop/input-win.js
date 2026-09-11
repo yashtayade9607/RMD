@@ -324,11 +324,23 @@ function stopHostKeyWatcher() {
   resetWatcherSeq();
 }
 
+function releaseAllModifiers() {
+  const vks = [0x10, 0x11, 0x12, 0x5b, 0x5c]; // VK_SHIFT, VK_CONTROL, VK_MENU (Alt), VK_LWIN, VK_RWIN
+  for (const vk of vks) {
+    try {
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 module.exports = {
   applyEvent,
   cursorNormalized,
   getCursor,
   moveCursorBy,
+  releaseAllModifiers,
   screenBounds,
   setCursorNormalized,
   setCursorPixels,
