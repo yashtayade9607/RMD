@@ -275,6 +275,7 @@ async function bootstrap() {
   log("info", "App", "Deskly starting up");
   const startRole = await window.deskly.getStartRole();
   if (startRole) state.role = startRole;
+  if (window.deskly?.setActiveRole && state.role) await window.deskly.setActiveRole(state.role);
   if (!state.token) {
     show("view-login");
     setStatus("Log in or create account");
@@ -353,6 +354,7 @@ $("btn-role-controller").onclick = () => setRole("controller");
 async function setRole(role) {
   log("info", "Role", `Switched role to ${role}`);
   state.role = role;
+  if (window.deskly?.setActiveRole) await window.deskly.setActiveRole(role);
   applyRoleUi();
   await openSocket();
 }
@@ -1224,32 +1226,46 @@ function updateInputPill() {
   if (state.role === "host") {
     el.textContent = state.remoteInputPaused ? "Remote BLOCKED" : "Remote ON";
     el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
+    el.title = state.remoteInputPaused
+      ? "Remote controller input is blocked. Click or press :qe (or Ctrl+Alt+E) to resume."
+      : "Remote controller input is active. Click or press :qw (or Ctrl+Alt+Q) to pause.";
+    el.style.cursor = "pointer";
   } else {
-    if (state.remoteInputPaused) {
-      el.textContent = "Host BLOCKED";
-      el.className = "pill off";
-    } else {
-      el.textContent = state.inputArmed ? "Input ON" : "Input PAUSED";
-      el.className = "pill " + (state.inputArmed ? "on" : "off");
-    }
+    el.textContent = state.remoteInputPaused ? "Host BLOCKED" : "Input ON";
+    el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
+    el.title = state.remoteInputPaused ? "Host has blocked remote input" : "Remote input active";
+    el.style.cursor = "default";
   }
 }
 
 function hostPauseRemoteInput() {
+  if (state.role !== "host") return;
   if (state.remoteInputPaused) return;
   state.remoteInputPaused = true;
-  log("info", "Host", "Host blocked remote input via shortcut");
+  log("info", "Host", "Host blocked remote input via :qw / shortcut");
   dcSend({ t: "input-feedback", paused: true });
   updateInputPill();
+  setSessionFeedback("⛔ Remote input BLOCKED (:qw / Ctrl+Alt+Q)");
+  window.deskly?.setRemoteInputPausedState?.(true);
 }
 
 function hostResumeRemoteInput() {
+  if (state.role !== "host") return;
   if (!state.remoteInputPaused) return;
   state.remoteInputPaused = false;
-  log("info", "Host", "Host resumed remote input via shortcut");
+  log("info", "Host", "Host resumed remote input via :qe / shortcut");
   dcSend({ t: "input-feedback", paused: false });
   updateInputPill();
+  setSessionFeedback("✅ Remote input RESUMED (:qe / Ctrl+Alt+E)");
+  window.deskly?.setRemoteInputPausedState?.(false);
 }
+
+$("input-state").onclick = () => {
+  if (state.role === "host") {
+    if (state.remoteInputPaused) hostResumeRemoteInput();
+    else hostPauseRemoteInput();
+  }
+};
 
 window.deskly.onHotkey((name) => {
   if (state.role === "host") {
@@ -1362,20 +1378,20 @@ video.addEventListener("mousemove", (ev) => {
 });
 
 video.addEventListener("mousedown", (ev) => {
-  if (state.role !== "controller" || !state.inputArmed) return;
+  if (state.role !== "controller" || !state.inputArmed || state.remoteInputPaused) return;
   ev.preventDefault();
   const p = videoNorm(ev);
   dcSend({ t: "in", e: { kind: "mouse-button", button: ev.button, down: true, x: p.x, y: p.y } });
 });
 
 video.addEventListener("mouseup", (ev) => {
-  if (state.role !== "controller" || !state.inputArmed) return;
+  if (state.role !== "controller" || !state.inputArmed || state.remoteInputPaused) return;
   const p = videoNorm(ev);
   dcSend({ t: "in", e: { kind: "mouse-button", button: ev.button, down: false, x: p.x, y: p.y } });
 });
 
 video.addEventListener("wheel", (ev) => {
-  if (state.role !== "controller" || !state.inputArmed) return;
+  if (state.role !== "controller" || !state.inputArmed || state.remoteInputPaused) return;
   dcSend({ t: "in", e: { kind: "wheel", deltaY: Math.sign(ev.deltaY) } });
 });
 
@@ -1384,12 +1400,14 @@ video.addEventListener("contextmenu", (ev) => ev.preventDefault());
 const WIN_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 
 function localCommand(token) {
-  if (token === "qw") {
-    if (state.role === "host") hostPauseRemoteInput();
+  if (state.role !== "host") return false;
+  const t = String(token || "").toLowerCase().trim();
+  if (t === "qw") {
+    hostPauseRemoteInput();
     return true;
   }
-  if (token === "qe") {
-    if (state.role === "host") hostResumeRemoteInput();
+  if (t === "qe") {
+    hostResumeRemoteInput();
     return true;
   }
   return false;
@@ -1399,40 +1417,46 @@ window.addEventListener("keydown", (ev) => {
   const target = ev.target;
   const isInputFocused = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
 
-  if (ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
-    ev.preventDefault();
-    if (state.role === "host") {
+  // ONLY HOST can trigger hotkeys and :qw / :qe command sequence
+  if (state.role === "host") {
+    if (ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
+      ev.preventDefault();
       if (ev.code === "KeyQ") hostPauseRemoteInput();
       else hostResumeRemoteInput();
+      return;
     }
-    return;
-  }
 
-  if (!isInputFocused && (state.cmd.length || ev.key === ":")) {
-    ev.preventDefault();
-    ev.stopPropagation();
-    if (ev.key === ":") {
-      state.cmd = ":";
-    } else if (ev.key === "Escape") {
-      state.cmd = "";
-    } else if (ev.key === "Enter") {
-      localCommand(state.cmd.slice(1));
-      state.cmd = "";
-    } else if (ev.key === "Backspace") {
-      state.cmd = state.cmd.slice(0, -1);
-    } else if (ev.key.length === 1) {
-      state.cmd += ev.key;
-      if (state.cmd === ":qw" || state.cmd === ":qe") {
+    if (!isInputFocused && (state.cmd.length || ev.key === ":")) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (ev.key === ":") {
+        state.cmd = ":";
+      } else if (ev.key === "Escape") {
+        state.cmd = "";
+      } else if (ev.key === "Enter") {
         localCommand(state.cmd.slice(1));
         state.cmd = "";
+      } else if (ev.key === "Backspace") {
+        state.cmd = state.cmd.slice(0, -1);
+      } else if (ev.key.length === 1) {
+        state.cmd += ev.key;
+        const lower = state.cmd.toLowerCase();
+        if (lower === ":qw" || lower === ":qe") {
+          localCommand(state.cmd.slice(1));
+          state.cmd = "";
+        }
       }
+      $("local-cmd")?.classList.toggle("hidden", !state.cmd);
+      const cmdText = $("local-cmd-text");
+      if (cmdText) cmdText.textContent = state.cmd.slice(1);
+      return;
     }
-    $("local-cmd").classList.toggle("hidden", !state.cmd);
-    $("local-cmd-text").textContent = state.cmd.slice(1);
     return;
   }
 
+  // CONTROLLER handling: controller NEVER controls pause/resume, and remote typing is blocked if paused by host
   if (state.role !== "controller") return;
+  if (state.remoteInputPaused) return;
   if (WIN_CODES.has(ev.code) || ev.key === "Meta") { ev.preventDefault(); return; }
   if (!state.inputArmed) return;
   if (ev.repeat) return;
@@ -1441,7 +1465,7 @@ window.addEventListener("keydown", (ev) => {
 
 window.addEventListener("keyup", (ev) => {
   if (state.role !== "controller") return;
-  if (state.cmd) return;
+  if (state.remoteInputPaused) return;
   if (WIN_CODES.has(ev.code) || ev.key === "Meta") { ev.preventDefault(); return; }
   if (!state.inputArmed) return;
   dcSend({ t: "in", e: { kind: "key", code: ev.code, down: false } });

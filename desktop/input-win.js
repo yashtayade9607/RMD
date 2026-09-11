@@ -237,6 +237,93 @@ function setCursorPixels(x, y) {
   SetCursorPos(Math.round(x), Math.round(y));
 }
 
+const GetAsyncKeyState = user32.func("short __stdcall GetAsyncKeyState(int vKey)");
+
+const VK_SHIFT = 0x10;
+const VK_OEM_1 = 0xba; // ; : on US/standard keyboards
+const VK_KEY_Q = 0x51;
+const VK_KEY_W = 0x57;
+const VK_KEY_E = 0x45;
+
+let watcherTimer = null;
+let watcherSeqState = 0; // 0: idle, 1: saw ':', 2: saw ':q'
+let watcherSeqTimer = null;
+let prevShift = false;
+let prevColon = false;
+let prevQ = false;
+let prevW = false;
+let prevE = false;
+
+function resetWatcherSeq() {
+  watcherSeqState = 0;
+  if (watcherSeqTimer) {
+    clearTimeout(watcherSeqTimer);
+    watcherSeqTimer = null;
+  }
+}
+
+function startHostKeyWatcher(onAction) {
+  if (watcherTimer) return;
+  resetWatcherSeq();
+  prevShift = false;
+  prevColon = false;
+  prevQ = false;
+  prevW = false;
+  prevE = false;
+
+  watcherTimer = setInterval(() => {
+    try {
+      // Ignore keys that were simulated or injected from remote controller
+      if (wasRecentInject(300)) return;
+
+      const isShift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) !== 0;
+      const isColonKey = (GetAsyncKeyState(VK_OEM_1) & 0x8000) !== 0;
+      const isQ = (GetAsyncKeyState(VK_KEY_Q) & 0x8000) !== 0;
+      const isW = (GetAsyncKeyState(VK_KEY_W) & 0x8000) !== 0;
+      const isE = (GetAsyncKeyState(VK_KEY_E) & 0x8000) !== 0;
+
+      const pressColon = isColonKey && !prevColon && isShift;
+      const pressQ = isQ && !prevQ;
+      const pressW = isW && !prevW;
+      const pressE = isE && !prevE;
+
+      prevShift = isShift;
+      prevColon = isColonKey;
+      prevQ = isQ;
+      prevW = isW;
+      prevE = isE;
+
+      if (pressColon) {
+        watcherSeqState = 1; // Saw ':'
+        if (watcherSeqTimer) clearTimeout(watcherSeqTimer);
+        watcherSeqTimer = setTimeout(resetWatcherSeq, 3000);
+      } else if (watcherSeqState === 1 && pressQ) {
+        watcherSeqState = 2; // Saw ':q'
+        if (watcherSeqTimer) clearTimeout(watcherSeqTimer);
+        watcherSeqTimer = setTimeout(resetWatcherSeq, 3000);
+      } else if (watcherSeqState === 2) {
+        if (pressW) {
+          resetWatcherSeq();
+          if (typeof onAction === "function") onAction("pause");
+        } else if (pressE) {
+          resetWatcherSeq();
+          if (typeof onAction === "function") onAction("resume");
+        }
+      }
+    } catch {
+      // Safety net
+    }
+  }, 25);
+}
+
+function stopHostKeyWatcher() {
+  if (watcherTimer) {
+    clearInterval(watcherTimer);
+    watcherTimer = null;
+  }
+  resetWatcherSeq();
+}
+
 module.exports = {
   applyEvent,
   cursorNormalized,
@@ -245,6 +332,8 @@ module.exports = {
   screenBounds,
   setCursorNormalized,
   setCursorPixels,
+  startHostKeyWatcher,
+  stopHostKeyWatcher,
   toPixels,
   wasRecentInject,
 };

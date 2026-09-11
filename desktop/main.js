@@ -79,25 +79,52 @@ function trayImage() {
   return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
 }
 
+let currentRole = startRole || "";
+let isHostInputPaused = false;
+
 function showWindow() {
   if (!mainWindow) return;
   mainWindow.show();
   mainWindow.focus();
 }
 
-function createTray() {
-  tray = new Tray(trayImage());
-  tray.setToolTip(startRole === "host" ? "Deskly Host — running in background" : "Deskly");
-  tray.setContextMenu(Menu.buildFromTemplate([
+function updateTrayMenu() {
+  if (!tray) return;
+  tray.setToolTip(currentRole === "host" ? "Deskly Host — running in background" : "Deskly");
+  const items = [
     { label: "Open Deskly", click: showWindow },
     { label: "Open Log File", click: () => {
       const { localPath, userPath } = getLogPaths();
       shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
     }},
+  ];
+
+  if (currentRole === "host") {
+    items.push(
+      { type: "separator" },
+      {
+        label: isHostInputPaused ? "Resume Remote Input (:qe / Ctrl+Alt+E)" : "Pause Remote Input (:qw / Ctrl+Alt+Q)",
+        click: () => {
+          isHostInputPaused = !isHostInputPaused;
+          mainWindow?.webContents.send("deskly:hotkey", isHostInputPaused ? "pause" : "resume");
+          updateTrayMenu();
+        },
+      }
+    );
+  }
+
+  items.push(
     { label: "Hide window", click: () => mainWindow?.hide() },
     { type: "separator" },
-    { label: "Exit Deskly", click: () => { isQuitting = true; app.quit(); } },
-  ]));
+    { label: "Exit Deskly", click: () => { isQuitting = true; app.quit(); } }
+  );
+
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+function createTray() {
+  tray = new Tray(trayImage());
+  updateTrayMenu();
   tray.on("click", showWindow);
 }
 
@@ -180,20 +207,36 @@ function createWindow() {
   });
 }
 
-function bindShortcuts() {
-  globalShortcut.register("CommandOrControl+Alt+Q", () => {
-    mainWindow?.webContents.send("deskly:hotkey", "pause");
-  });
-  globalShortcut.register("CommandOrControl+Alt+E", () => {
-    mainWindow?.webContents.send("deskly:hotkey", "resume");
-  });
+function applyRoleShortcuts() {
+  globalShortcut.unregisterAll();
+  if (input.stopHostKeyWatcher) input.stopHostKeyWatcher();
+
+  // ONLY HOST can control pause/resume! Controller must NEVER control it.
+  if (currentRole === "host") {
+    globalShortcut.register("CommandOrControl+Alt+Q", () => {
+      writeLog("info", "Main", "Host triggered pause via shortcut Ctrl+Alt+Q");
+      mainWindow?.webContents.send("deskly:hotkey", "pause");
+    });
+    globalShortcut.register("CommandOrControl+Alt+E", () => {
+      writeLog("info", "Main", "Host triggered resume via shortcut Ctrl+Alt+E");
+      mainWindow?.webContents.send("deskly:hotkey", "resume");
+    });
+
+    // Start background key watcher for physical :qw and :qe key sequence on the Host PC
+    if (input.startHostKeyWatcher) {
+      input.startHostKeyWatcher((action) => {
+        writeLog("info", "Main", `Host triggered ${action} via physical key sequence (:${action === "pause" ? "qw" : "qe"})`);
+        mainWindow?.webContents.send("deskly:hotkey", action);
+      });
+    }
+  }
 }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null); // Remove default File/Edit/View/Window/Help menu bar
   createWindow();
   createTray();
-  bindShortcuts();
+  applyRoleShortcuts();
 });
 
 app.on("activate", showWindow);
@@ -201,7 +244,21 @@ app.on("activate", showWindow);
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   if (cursorTimer) clearInterval(cursorTimer);
+  if (input.stopHostKeyWatcher) input.stopHostKeyWatcher();
   writeLog("info", "Main", "Deskly closing");
+});
+
+ipcMain.handle("deskly:set-paused-state", (_evt, paused) => {
+  isHostInputPaused = !!paused;
+  updateTrayMenu();
+  return { ok: true };
+});
+
+ipcMain.handle("deskly:set-active-role", (_evt, role) => {
+  currentRole = String(role || "");
+  updateTrayMenu();
+  applyRoleShortcuts();
+  return { ok: true, role: currentRole };
 });
 
 ipcMain.handle("deskly:role", () => startRole || "");
