@@ -125,7 +125,6 @@ export async function registerRoutes(app) {
         videoQuality: "balanced",
         screenSize: "adaptive",
         hostRunInBackground: false,
-        fps: 60,
         recentDevices: [],
       });
 
@@ -208,13 +207,6 @@ export async function registerRoutes(app) {
     }
   });
 
-  app.get("/api/devices/status", { preHandler: requireAuth }, async (request) => {
-    const settings = await Settings.findOne({ userId: request.user.sub });
-    const recent = settings?.recentDevices || [];
-    const populated = await populateRecentDevices(recent);
-    return { recentDevices: populated };
-  });
-
   app.patch("/api/settings", { preHandler: requireAuth }, async (request, reply) => {
     try {
       const patch = request.body || {};
@@ -229,9 +221,6 @@ export async function registerRoutes(app) {
       }
       if (typeof patch.hostRunInBackground === "boolean") {
         allowed.hostRunInBackground = patch.hostRunInBackground;
-      }
-      if (typeof patch.fps === "number" && patch.fps >= 15 && patch.fps <= 120) {
-        allowed.fps = Math.round(patch.fps);
       }
       if (Array.isArray(patch.recentDevices)) {
         allowed.recentDevices = patch.recentDevices

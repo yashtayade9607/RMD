@@ -191,9 +191,8 @@ function applyEvent(evt, options = {}) {
     return;
   }
   if (evt.kind === "mouse-button") {
-    let p = null;
     if (typeof evt.x === "number" && typeof evt.y === "number") {
-      p = toPixels(evt.x, evt.y);
+      const p = toPixels(evt.x, evt.y);
       SetCursorPos(p.px, p.py);
     }
     let flags = 0;
@@ -201,11 +200,7 @@ function applyEvent(evt, options = {}) {
     else if (evt.button === 2) flags = evt.down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
     else flags = evt.down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP;
     markInject();
-    if (p) {
-      mouse_event(flags | MOUSEEVENTF_ABSOLUTE, p.ax, p.ay, 0, 0);
-    } else {
-      mouse_event(flags, 0, 0, 0, 0);
-    }
+    mouse_event(flags, 0, 0, 0, 0);
     return;
   }
   if (evt.kind === "wheel") {

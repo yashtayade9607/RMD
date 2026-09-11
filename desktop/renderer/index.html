@@ -34,14 +34,8 @@
           <div class="screen-fit-group">
             <span class="screen-fit-title">Size:</span>
             <button id="btn-size-adaptive" class="fit-btn active" title="Native / Adaptive resolution">Native</button>
-            <button id="btn-size-1080p" class="fit-btn" title="1920×1080">1080p</button>
-            <button id="btn-size-720p" class="fit-btn" title="1280×720 (fastest)">720p</button>
-          </div>
-          <div class="screen-fit-group">
-            <span class="screen-fit-title">FPS:</span>
-            <button id="btn-fps-30" class="fit-btn" title="30 FPS (Low bandwidth)">30</button>
-            <button id="btn-fps-60" class="fit-btn active" title="60 FPS (Smooth)">60</button>
-            <button id="btn-fps-120" class="fit-btn" title="120 FPS (Ultra smooth)">120</button>
+            <button id="btn-size-1080p" class="fit-btn" title="1920×1080 @ 60 FPS">1080p</button>
+            <button id="btn-size-720p" class="fit-btn" title="1280×720 @ 60 FPS (fastest)">720p</button>
           </div>
         </div>
 
@@ -94,15 +88,16 @@
       <section id="view-home" class="hidden">
         <div class="split">
           <div class="card">
-            <h2>Remote Connection</h2>
+            <h2>This computer</h2>
             <div class="role-row">
-              <button id="btn-role-host" class="role active">This PC (Host ID)</button>
-              <button id="btn-role-controller" class="role">Remote PC (Connect)</button>
+              <button id="btn-role-host" class="role">Controlled PC (host)</button>
+              <button id="btn-role-controller" class="role">Controller</button>
             </div>
-            <p class="muted" id="role-hint">This PC is ready to accept remote connections anytime. You can also connect to any other PC below.</p>
-            <div id="host-info" class="box">
+            <p class="muted" id="role-hint">Host waits for a connection. Controller types the host ID and password — no accept popup.</p>
+            <label id="background-setting" class="check hidden"><input type="checkbox" id="set-background" /> Run host in the system tray (hide this window)</label>
+            <div id="host-info" class="hidden box">
               <div class="field-header">
-                <span>Your Host ID (share to allow remote access)</span>
+                <span>Your Host ID</span>
                 <button id="btn-copy-id" class="copy-btn" title="Copy ID to clipboard">Copy ID</button>
               </div>
               <div class="id" id="host-id">—</div>
@@ -125,13 +120,12 @@
               <p id="host-pass-msg" class="muted"></p>
               <button id="btn-stop-host" class="danger">Stop Host &amp; log out</button>
             </div>
-            <div id="controller-box" class="box" style="margin-top: 14px;">
-              <h3 style="margin-top: 0; font-size: 15px;">Connect to Another PC</h3>
+            <div id="controller-box" class="hidden">
               <label>Host ID <input id="connect-id" placeholder="123 456 789" /></label>
               <label>Access password <input id="connect-pass" type="password" placeholder="Host access password" /></label>
               <button id="btn-connect">Connect</button>
               <p id="connect-error" class="error"></p>
-              <div id="recent-devices" class="recent">
+              <div id="recent-devices" class="recent hidden">
                 <div class="recent-header">
                   <span class="muted">Saved Devices (Lifetime Instant Access)</span>
                   <span id="saved-count" class="badge">0</span>
@@ -142,17 +136,8 @@
           </div>
           <div class="card">
             <h2>Settings</h2>
-            <label class="check"><input type="checkbox" id="set-auto-start" /> Start Deskly with Windows (Silent in Tray)</label>
-            <label class="check"><input type="checkbox" id="set-background" /> Run host in background (system tray only)</label>
             <label class="check"><input type="checkbox" id="set-follow" /> Mouse follow (both cursors follow each other)</label>
             <label class="check"><input type="checkbox" id="set-winkey" checked /> Block Windows key from controller</label>
-            <label>Framerate (FPS)
-              <select id="set-fps">
-                <option value="30">30 FPS (bandwidth saving)</option>
-                <option value="60" selected>60 FPS (standard)</option>
-                <option value="120">120 FPS (ultra smooth)</option>
-              </select>
-            </label>
             <label>Picture quality
               <select id="set-quality">
                 <option value="smooth">Smooth (faster)</option>

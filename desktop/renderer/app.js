@@ -13,23 +13,6 @@ const params = new URLSearchParams(location.search);
 const API = (params.get("apiUrl") || "http://127.0.0.1:3780").replace(/\s+/g, "").replace(/\/$/, "");
 const SIGNAL = API.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 
-// WebRTC SDP munging to guarantee instant high bitrate and disable initial low-resolution probing
-function mungeSdp(sdp) {
-  if (!sdp) return sdp;
-  let lines = sdp.split("\r\n");
-  const videoIdx = lines.findIndex((l) => l.startsWith("m=video"));
-  if (videoIdx !== -1) {
-    lines.splice(videoIdx + 1, 0, "b=AS:12000", "b=TIAS:12000000");
-  }
-  lines = lines.map((line) => {
-    if (line.startsWith("a=fmtp:")) {
-      return `${line};x-google-min-bitrate=4000;x-google-start-bitrate=8000;x-google-max-bitrate=15000`;
-    }
-    return line;
-  });
-  return lines.join("\r\n");
-}
-
 const state = {
   token: localStorage.getItem("desklyToken") || "",
   role: params.get("role") || "",
@@ -39,12 +22,9 @@ const state = {
     blockWinKey: true,
     videoQuality: "balanced",
     screenSize: "adaptive",
-    fps: Number(localStorage.getItem("desklyFps")) || 60,
     hostRunInBackground: false,
     recentDevices: [],
   },
-  connectedHostUsername: "",
-  connectedHostId: "",
   ws: null,
   wsReconnectTimer: null,
   wsReconnectDelay: 1000,
@@ -122,10 +102,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
-function qualityConstraints(overrideSize, overrideFps) {
+function qualityConstraints(overrideSize) {
   const size = overrideSize || state.settings.screenSize || "adaptive";
-  const fps = Number(overrideFps || state.settings.fps) || 60;
-  const frameRate = { ideal: fps, max: fps };
+  const frameRate = { ideal: 60, max: 60 };
   if (size === "720p") {
     return { width: { ideal: 1280, max: 1280 }, height: { ideal: 720, max: 720 }, frameRate };
   }
@@ -176,16 +155,8 @@ function paintHome() {
   $("set-winkey").checked = state.settings.blockWinKey !== false;
   $("set-quality").value = state.settings.videoQuality || "balanced";
   $("set-screen-size").value = state.settings.screenSize || "adaptive";
-  if ($("set-fps")) $("set-fps").value = String(state.settings.fps || 60);
   $("set-background").checked = !!state.settings.hostRunInBackground;
-  updateFpsButtons();
-  if ($("set-auto-start") && window.deskly?.getAutoLaunch) {
-    window.deskly.getAutoLaunch().then((enabled) => {
-      $("set-auto-start").checked = !!enabled;
-    }).catch(() => {});
-  }
   renderRecentDevices();
-  startPresencePolling();
 }
 
 function renderRecentDevices() {
@@ -291,29 +262,13 @@ function renderRecentDevices() {
 }
 
 function applyRoleUi() {
-  $("btn-role-host")?.classList.toggle("active", state.role === "host");
-  $("btn-role-controller")?.classList.toggle("active", state.role === "controller");
-  $("host-info")?.classList.remove("hidden");
-  $("controller-box")?.classList.remove("hidden");
-  if (state.role === "host") setStatus("Host — ready for incoming & outgoing connections");
+  $("btn-role-host").classList.toggle("active", state.role === "host");
+  $("btn-role-controller").classList.toggle("active", state.role === "controller");
+  $("host-info").classList.toggle("hidden", state.role !== "host");
+  $("background-setting").classList.toggle("hidden", state.role !== "host");
+  $("controller-box").classList.toggle("hidden", state.role !== "controller");
+  if (state.role === "host") setStatus("Host — waiting (no accept prompt)");
   else if (state.role === "controller") setStatus("Controller — enter ID + password");
-}
-
-let presencePollTimer = null;
-function startPresencePolling() {
-  if (presencePollTimer) clearInterval(presencePollTimer);
-  presencePollTimer = setInterval(async () => {
-    if (!state.token || state.wsInSession) return;
-    try {
-      const res = await api("/api/devices/status");
-      if (res.recentDevices) {
-        state.settings.recentDevices = res.recentDevices;
-        renderRecentDevices();
-      }
-    } catch {
-      /* ignore */
-    }
-  }, 8000);
 }
 
 async function bootstrap() {
@@ -404,20 +359,16 @@ async function setRole(role) {
 
 async function saveSettings() {
   state.settings = {
-    ...state.settings,
     mouseFollow: $("set-follow").checked,
     blockWinKey: $("set-winkey").checked,
     videoQuality: $("set-quality").value,
     screenSize: $("set-screen-size").value,
-    fps: Number($("set-fps")?.value || state.settings.fps || 60),
     hostRunInBackground: $("set-background").checked,
     recentDevices: state.settings.recentDevices || [],
   };
-  localStorage.setItem("desklyFps", String(state.settings.fps));
-  updateFpsButtons();
   log("info", "Settings", "Saving settings", state.settings);
   const res = await api("/api/settings", { method: "PATCH", body: state.settings });
-  if (res.settings) state.settings = { ...state.settings, ...res.settings };
+  if (res.settings) state.settings = res.settings;
   $("save-msg").textContent = "Saved.";
   setTimeout(() => ($("save-msg").textContent = ""), 1500);
 }
@@ -429,22 +380,9 @@ $("set-screen-size").onchange = () => {
   setScreenResolution($("set-screen-size").value);
   saveSettings();
 };
-if ($("set-fps")) {
-  $("set-fps").onchange = () => {
-    setTargetFps($("set-fps").value);
-    saveSettings();
-  };
-}
-if ($("set-auto-start")) {
-  $("set-auto-start").onchange = async () => {
-    if (window.deskly?.setAutoLaunch) {
-      await window.deskly.setAutoLaunch($("set-auto-start").checked);
-    }
-  };
-}
 $("set-background").onchange = async () => {
   await saveSettings();
-  await window.deskly.setBackground(state.settings.hostRunInBackground);
+  if (state.role === "host") await window.deskly.setBackground(state.settings.hostRunInBackground);
 };
 
 $("btn-copy-id").onclick = () => {
@@ -679,9 +617,8 @@ function openSocket(isReconnect = false) {
     ws.onopen = () => {
       state.wsReconnectDelay = 1000; // reset back-off on success
       log("info", "Signaling", `WebSocket connected as ${state.role}`);
-      startWsPing();
       if (isReconnect && state.wsInSession) {
-        setStatus(state.role === "host" ? "Host online" : `Connected (${state.settings.fps || 60} FPS)`);
+        setStatus(state.role === "host" ? "Host online" : "Connected (60 FPS)");
         setSessionFeedback("🔄 Signaling reconnected");
       } else {
         setStatus(state.role === "host" ? "Host online" : "Controller online");
@@ -690,7 +627,6 @@ function openSocket(isReconnect = false) {
     };
 
     ws.onclose = (ev) => {
-      stopWsPing();
       if (ws._desklyManaged) return; // intentionally closed — skip
       log("warn", "Signaling", `WS closed (code=${ev.code})`);
       if (state.wsInSession) {
@@ -710,23 +646,6 @@ function openSocket(isReconnect = false) {
   });
 }
 
-let wsPingTimer = null;
-function startWsPing() {
-  stopWsPing();
-  wsPingTimer = setInterval(() => {
-    if (state.ws && state.ws.readyState === 1) {
-      sendWs({ type: "ping" });
-    }
-  }, 10000);
-}
-
-function stopWsPing() {
-  if (wsPingTimer) {
-    clearInterval(wsPingTimer);
-    wsPingTimer = null;
-  }
-}
-
 function sendWs(msg) {
   if (state.ws && state.ws.readyState === 1) {
     state.ws.send(JSON.stringify(msg));
@@ -734,26 +653,9 @@ function sendWs(msg) {
 }
 
 async function onSignal(msg) {
-  if (msg.type === "device-status") {
-    log("info", "Signaling", `Device status update: ${msg.publicId} -> ${msg.online ? "online" : "offline"}`);
-    let changed = false;
-    if (state.settings.recentDevices) {
-      for (const dev of state.settings.recentDevices) {
-        if (String(dev.publicId).replace(/\D/g, "") === String(msg.publicId).replace(/\D/g, "")) {
-          dev.online = !!msg.online;
-          changed = true;
-        }
-      }
-    }
-    if (changed) renderRecentDevices();
-    return;
-  }
   if (msg.type === "start-session" && state.role === "host") {
     log("info", "Signaling", "Host received start-session command", msg.settings);
     state.settings = { ...state.settings, ...msg.settings };
-    // Show the window first so the screen-picker dialog is visible to the user.
-    // Without this, the picker is invisible when host runs in background, causing apparent freeze.
-    if (window.deskly?.showWindow) await window.deskly.showWindow().catch(() => {});
     await startHostSession();
   }
   if (msg.type === "connect-result") {
@@ -766,10 +668,8 @@ async function onSignal(msg) {
       applyRoleUi();
     } else {
       log("info", "Signaling", "Connect result OK from host", msg.device);
-      state.connectedHostUsername = msg.device?.username || "";
-      state.connectedHostId = String(msg.device?.publicId || $("connect-id").value).replace(/\D/g, "");
       rememberConnectedDevice($("connect-id").value, $("connect-pass").value, msg.device?.username);
-      const hostDisplay = state.connectedHostUsername ? `@${state.connectedHostUsername}` : displayId($("connect-id").value);
+      const hostDisplay = msg.device?.username || displayId($("connect-id").value);
       $("session-label").textContent = `Host: ${hostDisplay}`;
       setStatus("Connecting…");
       setSessionFeedback("");
@@ -941,10 +841,8 @@ async function startHostSession() {
       log("info", "WebRTC", `Screen track acquired in ${Date.now() - t0}ms, contentHint=motion`);
     }
     const offer = await pc.createOffer();
-    // Apply SDP munging to lock in high bitrate and disable initial low-res probing
-    const mungledOffer = { ...offer, sdp: mungeSdp(offer.sdp) };
-    await pc.setLocalDescription(mungledOffer);
-    sendWs({ type: "signal", data: { kind: "offer", sdp: mungledOffer } });
+    await pc.setLocalDescription(offer);
+    sendWs({ type: "signal", data: { kind: "offer", sdp: offer } });
     enterSession("Hosting — screen shared");
     window.deskly.startCursorLoop();
   } catch (err) {
@@ -967,16 +865,10 @@ async function prepareControllerPeer() {
     if (cs === "connected" || cs === "completed") {
       if (ctrlDisconnectedTimer) { clearTimeout(ctrlDisconnectedTimer); ctrlDisconnectedTimer = null; }
       clearIceRecoveryTimer();
-      const fps = state.settings.fps || 60;
-      setStatus(`Connected (${fps} FPS)`);
+      setStatus("Connected (60 FPS)");
       setSessionFeedback("");
-      // Show username (not raw ID) — state.connectedHostUsername was set by connect-result
-      const hostDisplay = state.connectedHostUsername
-        ? `@${state.connectedHostUsername}`
-        : state.connectedHostId
-        ? displayId(state.connectedHostId)
-        : displayId($("connect-id")?.value || "");
-      $("session-label").textContent = `Host: ${hostDisplay}`;
+      const hostId = $("connect-id")?.value;
+      if (hostId) $("session-label").textContent = `Host: ${displayId(hostId)}`;
       refreshWindowBounds();
     } else if (cs === "disconnected") {
       // Debounce transient STUN re-evaluation so UI doesn't flash needlessly
@@ -1039,10 +931,8 @@ async function handleRtc(data) {
     await state.pc.setRemoteDescription(data.sdp);
     await drainIceQueue();
     const answer = await state.pc.createAnswer();
-    // Apply SDP munging so controller also signals high bitrate back to host
-    const mungledAnswer = { ...answer, sdp: mungeSdp(answer.sdp) };
-    await state.pc.setLocalDescription(mungledAnswer);
-    sendWs({ type: "signal", data: { kind: "answer", sdp: mungledAnswer } });
+    await state.pc.setLocalDescription(answer);
+    sendWs({ type: "signal", data: { kind: "answer", sdp: answer } });
     log("info", "WebRTC", `Answer sent in ${Date.now() - t0}ms`);
   } else if (data.kind === "answer") {
     log("info", "WebRTC", "Host received answer, applying remote description");
@@ -1266,49 +1156,6 @@ async function setScreenResolution(size) {
 $("btn-size-adaptive").onclick = () => setScreenResolution("adaptive");
 $("btn-size-1080p").onclick = () => setScreenResolution("1080p");
 $("btn-size-720p").onclick = () => setScreenResolution("720p");
-// -- FPS management ----------------------------------------------------------
-
-function updateFpsButtons() {
-  const fps = state.settings.fps || 60;
-  $("btn-fps-30")?.classList.toggle("active", fps === 30);
-  $("btn-fps-60")?.classList.toggle("active", fps === 60);
-  $("btn-fps-120")?.classList.toggle("active", fps === 120);
-  if ($("set-fps")) $("set-fps").value = String(fps);
-}
-
-async function setTargetFps(value) {
-  const fps = Math.max(15, Math.min(120, Number(value) || 60));
-  state.settings.fps = fps;
-  localStorage.setItem("desklyFps", String(fps));
-  updateFpsButtons();
-  log("info", "Screen", `FPS target changed to ${fps}`);
-
-  // Apply immediately to the live host capture track if we are the host
-  if (state.role === "host" && state.hostVideoTrack) {
-    try {
-      await state.hostVideoTrack.applyConstraints(qualityConstraints(state.settings.screenSize, fps));
-      log("info", "Screen", `Applied FPS constraint ${fps} to live track`);
-    } catch (e) {
-      log("warn", "Screen", `Could not apply FPS constraints: ${e.message}`);
-    }
-  }
-
-  if (state.wsInSession) {
-    setStatus(`Connected (${fps} FPS)`);
-    setSessionFeedback(`FPS set to ${fps}`);
-    // Notify peer of the FPS change so they can update their status display
-    dcSend({ t: "settings", settings: { fps } });
-  }
-
-  try {
-    await api("/api/settings", { method: "PATCH", body: { fps } });
-  } catch { /* ignore � FPS is saved locally even if API is unreachable */ }
-}
-
-if ($("btn-fps-30")) $("btn-fps-30").onclick = () => { setTargetFps(30); saveSettings(); };
-if ($("btn-fps-60")) $("btn-fps-60").onclick = () => { setTargetFps(60); saveSettings(); };
-if ($("btn-fps-120")) $("btn-fps-120").onclick = () => { setTargetFps(120); saveSettings(); };
-
 
 let feedbackTimer = null;
 function setSessionFeedback(text, durationMs = 2800) {
@@ -1327,7 +1174,6 @@ function syncSessionUi() {
   const follow = !!state.settings.mouseFollow;
   $("session-follow-toggle").checked = follow;
   $("set-follow").checked = follow;
-  updateFpsButtons();
 }
 
 async function setMouseFollow(enabled) {

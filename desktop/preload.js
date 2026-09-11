@@ -4,8 +4,6 @@ contextBridge.exposeInMainWorld("deskly", {
   getStartRole: () => ipcRenderer.invoke("deskly:role"),
   showWindow: () => ipcRenderer.invoke("deskly:show-window"),
   setBackground: (enabled) => ipcRenderer.invoke("deskly:set-background", enabled),
-  getAutoLaunch: () => ipcRenderer.invoke("deskly:get-auto-launch"),
-  setAutoLaunch: (enabled) => ipcRenderer.invoke("deskly:set-auto-launch", enabled),
   inject: (event, options) => ipcRenderer.invoke("deskly:inject", event, options),
   cursor: () => ipcRenderer.invoke("deskly:cursor"),
   followCursor: (x, y) => ipcRenderer.invoke("deskly:follow-cursor", x, y),

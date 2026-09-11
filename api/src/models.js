@@ -32,7 +32,6 @@ const settingsSchema = new mongoose.Schema(
     videoQuality: { type: String, enum: ["smooth", "balanced", "sharp"], default: "balanced" },
     screenSize: { type: String, enum: ["adaptive", "720p", "1080p"], default: "adaptive" },
     hostRunInBackground: { type: Boolean, default: false },
-    fps: { type: Number, default: 60 },
     recentDevices: {
       type: [{ publicId: String, username: String, accessPassword: String, lastConnectedAt: Date }],
       default: [],

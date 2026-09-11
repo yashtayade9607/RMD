@@ -103,9 +103,7 @@ try {
     if (err.codeName !== "IndexNotFound") throw err;
   });
   await Device.collection.createIndex({ ownerId: 1, role: 1 }, { unique: true });
-  // Reset all devices to offline on startup so stale crashed sessions are purged
-  await Device.updateMany({}, { $set: { online: false } });
-  app.log.info("[DB] Indexes verified & initial device statuses reset successfully ✓");
+  app.log.info("[DB] Indexes verified successfully ✓");
 } catch (indexErr) {
   app.log.warn(`[DB] Index setup warning: ${indexErr.message}`);
 }

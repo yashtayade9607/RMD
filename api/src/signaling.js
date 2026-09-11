@@ -15,75 +15,20 @@ export function attachSignaling(app) {
   const socketKey = (userId, role) => `${userId}:${role}`;
 
   function send(socket, payload) {
-    if (socket && socket.readyState === 1) {
-      try {
-        socket.send(JSON.stringify(payload));
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  function broadcastStatus(publicId, online) {
-    if (!publicId) return;
-    const payload = { type: "device-status", publicId, online };
-    for (const s of sockets.values()) {
-      send(s, payload);
-    }
+    if (socket && socket.readyState === 1) socket.send(JSON.stringify(payload));
   }
 
   async function setOnline(userId, role, online) {
-    try {
-      // Only update the specific role device — not ALL devices of this user
-      const dev = await Device.findOneAndUpdate(
-        { ownerId: userId, role },
-        { $set: { online, lastSeenAt: new Date() } },
-        { new: false }  // return old doc (value not needed, just efficient)
-      );
-      if (dev) {
-        broadcastStatus(dev.publicId, online);
-      }
-    } catch (err) {
-      app.log.warn(`[Signaling] Failed to update device online state: ${err.message}`);
-    }
+    await Device.findOneAndUpdate(
+      { ownerId: userId, role },
+      { $set: { online, lastSeenAt: new Date() } }
+    );
   }
-
-  // 15-second heartbeat to detect dead or silently dropped sockets immediately
-  const heartbeatInterval = setInterval(() => {
-    for (const [k, s] of sockets.entries()) {
-      if (s.readyState !== 1) {
-        sockets.delete(k);
-        continue;
-      }
-      if (s._desklyAlive === false) {
-        app.log.warn(`[Signaling] Heartbeat timeout for ${k}, closing socket`);
-        try {
-          if (typeof s.terminate === "function") s.terminate();
-          else s.close(4008, "heartbeat-timeout");
-        } catch {
-          /* ignore */
-        }
-        continue;
-      }
-      s._desklyAlive = false;
-      try {
-        if (typeof s.ping === "function") s.ping();
-        send(s, { type: "ping" });
-      } catch {
-        /* ignore */
-      }
-    }
-  }, 15000);
-
-  app.addHook("onClose", (_instance, done) => {
-    clearInterval(heartbeatInterval);
-    done();
-  });
 
   app.get("/ws", { websocket: true }, (socket, request) => {
     const url = new URL(request.url, "http://localhost");
     const token = url.searchParams.get("token");
-    const role = url.searchParams.get("role") || "host";
+    const role = url.searchParams.get("role");
     let user;
     try {
       user = verifyToken(token || "");
@@ -91,15 +36,12 @@ export function attachSignaling(app) {
       socket.close(4001, "auth");
       return;
     }
+    if (role !== "host" && role !== "controller") {
+      socket.close(4002, "role");
+      return;
+    }
 
     const key = socketKey(user.sub, role);
-    socket._desklyAlive = true;
-
-    if (typeof socket.on === "function") {
-      socket.on("pong", () => {
-        socket._desklyAlive = true;
-      });
-    }
 
     // If there was a pending peer-gone timer for this key, cancel it —
     // the client reconnected before the grace window expired.
@@ -119,6 +61,7 @@ export function attachSignaling(app) {
     const existingPeer = peers.get(key);
     if (existingPeer && existingPeer.readyState === 1) {
       socket.peer = existingPeer;
+      // Also update the peer's reference to point to the fresh socket
       const peerKey = existingPeer._desklyKey;
       if (peerKey) {
         existingPeer.peer = socket;
@@ -134,7 +77,6 @@ export function attachSignaling(app) {
     send(socket, { type: "hello", role });
 
     socket.on("message", async (raw) => {
-      socket._desklyAlive = true;
       let msg;
       try {
         msg = JSON.parse(String(raw));
@@ -145,30 +87,18 @@ export function attachSignaling(app) {
         send(socket, { type: "pong", t: Date.now() });
         return;
       }
-      if (msg.type === "pong") {
-        return;
-      }
 
-      // Allow ANY connected device to initiate a connection to another host regardless of current role
-      if (msg.type === "connect") {
-        const targetHostId = String(msg.hostId || "").replace(/\s/g, "");
-        const host = await Device.findOne({ publicId: targetHostId });
+      if (role === "controller" && msg.type === "connect") {
+        const host = await Device.findOne({ publicId: String(msg.hostId || "").replace(/\s/g, ""), role: "host" });
         if (!host) return send(socket, { type: "connect-result", ok: false, error: "Unknown ID." });
         if (!(await bcrypt.compare(String(msg.password || ""), host.accessPasswordHash))) {
           return send(socket, { type: "connect-result", ok: false, error: "Wrong password." });
         }
-
-        const hostOwnerId = String(host.ownerId);
-        let hostSocket = sockets.get(socketKey(hostOwnerId, host.role));
-        if (!hostSocket || hostSocket.readyState !== 1) {
-          hostSocket = sockets.get(socketKey(hostOwnerId, "host")) || sockets.get(socketKey(hostOwnerId, "controller"));
-        }
-
+        const hostKey = socketKey(String(host.ownerId), "host");
+        const hostSocket = sockets.get(hostKey);
         if (!hostSocket || hostSocket.readyState !== 1) {
           return send(socket, { type: "connect-result", ok: false, error: "The controlled PC is not online." });
         }
-
-        const hostKey = hostSocket._desklyKey;
         // Link peers both ways and register in peer map for reconnect re-attach
         socket.peer = hostSocket;
         hostSocket.peer = socket;

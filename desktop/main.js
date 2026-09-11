@@ -3,40 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const input = require("./input-win");
 
-// Prevent Chromium from freezing renderers/WebRTC on Windows when windows are minimized or occluded
-app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
-app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
-app.commandLine.appendSwitch("disable-renderer-backgrounding");
-app.commandLine.appendSwitch("disable-background-timer-throttling");
-
 const roleArg = process.argv.find((a) => a.startsWith("--role="));
 const startRole = roleArg ? roleArg.split("=")[1] : "";
 const apiArg = process.argv.find((a) => a.startsWith("--api-url="));
-const isHiddenArg = process.argv.includes("--hidden") || process.argv.includes("--tray");
-
-function getAutoLaunch() {
-  try {
-    return app.getLoginItemSettings().openAtLogin;
-  } catch {
-    return false;
-  }
-}
-
-function setAutoLaunch(enable) {
-  try {
-    app.setLoginItemSettings({
-      openAtLogin: !!enable,
-      openAsHidden: true,
-      path: process.execPath,
-      args: ["--role=host", "--hidden"],
-    });
-    writeLog("info", "AutoLaunch", `Windows auto-launch set to: ${!!enable}`);
-    return true;
-  } catch (e) {
-    writeLog("warn", "AutoLaunch", `Failed to set auto-launch: ${e.message}`);
-    return false;
-  }
-}
 
 function configuredApiUrl() {
   if (apiArg) return apiArg.slice("--api-url=".length).trim().replace(/\s+/g, "").replace(/\/$/, "");
@@ -116,58 +85,20 @@ function showWindow() {
   mainWindow.focus();
 }
 
-function updateTrayMenu() {
-  if (!tray) return;
-  const isAuto = getAutoLaunch();
-  const isVisible = mainWindow && mainWindow.isVisible();
+function createTray() {
+  tray = new Tray(trayImage());
+  tray.setToolTip(startRole === "host" ? "Deskly Host — running in background" : "Deskly");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: isVisible ? "Hide Window to Tray" : "Open Deskly", click: () => {
-      if (isVisible) mainWindow?.hide();
-      else showWindow();
-      updateTrayMenu();
-    }},
-    { type: "separator" },
-    {
-      label: "Start with Windows (System Tray)",
-      type: "checkbox",
-      checked: isAuto,
-      click: (item) => {
-        setAutoLaunch(item.checked);
-        updateTrayMenu();
-      },
-    },
-    {
-      label: "Run in Background (Tray Only)",
-      type: "checkbox",
-      checked: !isVisible,
-      click: (item) => {
-        if (item.checked) mainWindow?.hide();
-        else showWindow();
-        updateTrayMenu();
-      },
-    },
-    { type: "separator" },
+    { label: "Open Deskly", click: showWindow },
     { label: "Open Log File", click: () => {
       const { localPath, userPath } = getLogPaths();
       shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
     }},
+    { label: "Hide window", click: () => mainWindow?.hide() },
     { type: "separator" },
     { label: "Exit Deskly", click: () => { isQuitting = true; app.quit(); } },
   ]));
-}
-
-function createTray() {
-  tray = new Tray(trayImage());
-  tray.setToolTip(startRole === "host" ? "Deskly Host — running in background" : "Deskly");
-  updateTrayMenu();
-  tray.on("click", () => {
-    if (mainWindow && mainWindow.isVisible()) {
-      mainWindow.hide();
-    } else {
-      showWindow();
-    }
-    updateTrayMenu();
-  });
+  tray.on("click", showWindow);
 }
 
 function createWindow() {
@@ -192,7 +123,7 @@ function createWindow() {
     minHeight: 460,
     // A configured Host starts as a tray-only background program. The renderer
     // asks to show this window only if first-time setup or login is needed.
-    show: !isHiddenArg && startRole !== "host",
+    show: startRole !== "host",
     backgroundColor: "#0b0f14",
     title: startRole === "host" ? "Deskly — Host" : startRole === "controller" ? "Deskly — Controller" : "Deskly",
     webPreferences: {
@@ -246,11 +177,7 @@ function createWindow() {
     if (isQuitting) return;
     event.preventDefault();
     mainWindow.hide();
-    updateTrayMenu();
   });
-
-  mainWindow.on("show", () => updateTrayMenu());
-  mainWindow.on("hide", () => updateTrayMenu());
 }
 
 function bindShortcuts() {
@@ -267,14 +194,6 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   bindShortcuts();
-  try {
-    const current = app.getLoginItemSettings();
-    if (!current.openAtLogin) {
-      setAutoLaunch(true);
-    }
-  } catch {
-    /* ignore */
-  }
 });
 
 app.on("activate", showWindow);
@@ -295,16 +214,7 @@ ipcMain.handle("deskly:show-window", () => {
 ipcMain.handle("deskly:set-background", (_evt, enabled) => {
   if (enabled) mainWindow?.hide();
   else showWindow();
-  updateTrayMenu();
   return { ok: true, runningInBackground: !!enabled };
-});
-
-ipcMain.handle("deskly:get-auto-launch", () => getAutoLaunch());
-
-ipcMain.handle("deskly:set-auto-launch", (_evt, enable) => {
-  const ok = setAutoLaunch(enable);
-  updateTrayMenu();
-  return { ok, enabled: getAutoLaunch() };
 });
 
 ipcMain.handle("deskly:inject", (_evt, event, options) => {
