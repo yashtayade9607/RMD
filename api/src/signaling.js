@@ -5,30 +5,33 @@ import { verifyToken } from "./auth.js";
 // Signaling only: WebRTC carries screen and controls directly between PCs.
 // Each socket is keyed by account, so different users cannot replace a Host.
 export function attachSignaling(app) {
-  const sockets = new Map();
+  const sockets = new Map();         // key -> socket
+  const socketsByPublicId = new Map(); // publicId -> socket
+  const socketsByOwner = new Map();    // userId -> Set of sockets
   // Peer references are stored per session key so reconnects can re-attach
-  const peers = new Map();    // key -> peer socket
+  const peers = new Map();             // key -> peer socket
   // Grace timers: if a socket closes, wait before sending peer-gone
-  const goneTimers = new Map(); // key -> setTimeout handle
-  const GONE_GRACE_MS = 8000;  // 8s grace window for reconnects
+  const goneTimers = new Map();        // key -> setTimeout handle
+  const GONE_GRACE_MS = 8000;          // 8s grace window for reconnects
 
-  const socketKey = (userId, role) => `${userId}:${role}`;
+  const socketKey = (userId, role, id) => `${userId}:${role}:${id || "default"}`;
 
   function send(socket, payload) {
     if (socket && socket.readyState === 1) socket.send(JSON.stringify(payload));
   }
 
   async function setOnline(userId, role, online) {
-    await Device.findOneAndUpdate(
-      { ownerId: userId, role },
+    await Device.updateMany(
+      { ownerId: userId },
       { $set: { online, lastSeenAt: new Date() } }
-    );
+    ).catch(() => {});
   }
 
   app.get("/ws", { websocket: true }, (socket, request) => {
     const url = new URL(request.url, "http://localhost");
     const token = url.searchParams.get("token");
-    const role = url.searchParams.get("role");
+    const role = url.searchParams.get("role") || "host";
+    const clientPublicId = String(url.searchParams.get("publicId") || "").replace(/\D/g, "");
     let user;
     try {
       user = verifyToken(token || "");
@@ -36,32 +39,39 @@ export function attachSignaling(app) {
       socket.close(4001, "auth");
       return;
     }
-    if (role !== "host" && role !== "controller") {
-      socket.close(4002, "role");
-      return;
+
+    const userId = String(user.sub);
+    const connId = Math.random().toString(36).slice(2, 9);
+    const key = socketKey(userId, role, connId);
+
+    // If there was a pending peer-gone timer for this user/role, cancel it
+    for (const [timerKey, timer] of goneTimers.entries()) {
+      if (timerKey.startsWith(`${userId}:${role}`)) {
+        clearTimeout(timer);
+        goneTimers.delete(timerKey);
+      }
     }
 
-    const key = socketKey(user.sub, role);
-
-    // If there was a pending peer-gone timer for this key, cancel it —
-    // the client reconnected before the grace window expired.
-    if (goneTimers.has(key)) {
-      clearTimeout(goneTimers.get(key));
-      goneTimers.delete(key);
-    }
-
-    // Close old socket if still open (replaced by fresh reconnect)
-    const previous = sockets.get(key);
-    if (previous && previous !== socket) {
-      try { previous.close(4000, "replaced"); } catch { /* ignore */ }
-    }
     sockets.set(key, socket);
+    if (!socketsByOwner.has(userId)) socketsByOwner.set(userId, new Set());
+    socketsByOwner.get(userId).add(socket);
 
-    // Re-attach to existing peer session if one exists
+    if (clientPublicId) {
+      socketsByPublicId.set(clientPublicId, socket);
+    }
+    // Also associate any devices owned by this user
+    Device.find({ ownerId: userId }).then((devs) => {
+      for (const dev of devs) {
+        if (!socketsByPublicId.has(dev.publicId)) {
+          socketsByPublicId.set(dev.publicId, socket);
+        }
+      }
+    }).catch(() => {});
+
+    // Re-attach to existing peer session if one exists for this user
     const existingPeer = peers.get(key);
     if (existingPeer && existingPeer.readyState === 1) {
       socket.peer = existingPeer;
-      // Also update the peer's reference to point to the fresh socket
       const peerKey = existingPeer._desklyKey;
       if (peerKey) {
         existingPeer.peer = socket;
@@ -73,7 +83,11 @@ export function attachSignaling(app) {
     }
 
     socket._desklyKey = key;
-    setOnline(user.sub, role, true);
+    socket._desklyUserId = userId;
+    socket._desklyRole = role;
+    socket._desklyPublicId = clientPublicId;
+
+    setOnline(userId, role, true);
     send(socket, { type: "hello", role });
 
     socket.on("message", async (raw) => {
@@ -88,30 +102,70 @@ export function attachSignaling(app) {
         return;
       }
 
-      if (role === "controller" && msg.type === "connect") {
-        const host = await Device.findOne({ publicId: String(msg.hostId || "").replace(/\s/g, ""), role: "host" });
-        if (!host) return send(socket, { type: "connect-result", ok: false, error: "Unknown ID." });
-        if (!(await bcrypt.compare(String(msg.password || ""), host.accessPasswordHash))) {
-          return send(socket, { type: "connect-result", ok: false, error: "Wrong password." });
+      // Allow connection regardless of whether role is host or controller
+      if (msg.type === "connect") {
+        const targetId = String(msg.hostId || "").replace(/\D/g, "");
+        if (!targetId) {
+          return send(socket, { type: "connect-result", ok: false, error: "Please enter a valid Device ID." });
         }
-        const hostKey = socketKey(String(host.ownerId), "host");
-        const hostSocket = sockets.get(hostKey);
-        if (!hostSocket || hostSocket.readyState !== 1) {
-          return send(socket, { type: "connect-result", ok: false, error: "The controlled PC is not online." });
+
+        // Find device in DB
+        const targetDev = await Device.findOne({ publicId: targetId });
+        if (!targetDev) {
+          return send(socket, { type: "connect-result", ok: false, error: "Unknown Device ID." });
         }
-        // Link peers both ways and register in peer map for reconnect re-attach
-        socket.peer = hostSocket;
-        hostSocket.peer = socket;
-        peers.set(key, hostSocket);
-        peers.set(hostKey, socket);
-        const settings = await Settings.findOne({ userId: host.ownerId });
-        const owner = await User.findById(host.ownerId).select("username");
+
+        // Validate password against this device or any device belonging to target owner
+        let passOk = false;
+        if (targetDev.accessPasswordHash) {
+          passOk = await bcrypt.compare(String(msg.password || ""), targetDev.accessPasswordHash);
+        }
+        if (!passOk) {
+          const userDevs = await Device.find({ ownerId: targetDev.ownerId });
+          for (const d of userDevs) {
+            if (d.accessPasswordHash && (await bcrypt.compare(String(msg.password || ""), d.accessPasswordHash))) {
+              passOk = true;
+              break;
+            }
+          }
+        }
+        if (!passOk) {
+          return send(socket, { type: "connect-result", ok: false, error: "Wrong access password." });
+        }
+
+        // Locate active target socket
+        let targetSocket = socketsByPublicId.get(targetId);
+        if (!targetSocket || targetSocket.readyState !== 1) {
+          const ownerSockets = socketsByOwner.get(String(targetDev.ownerId));
+          if (ownerSockets) {
+            for (const s of ownerSockets) {
+              if (s.readyState === 1 && s !== socket) {
+                targetSocket = s;
+                break;
+              }
+            }
+          }
+        }
+        if (!targetSocket || targetSocket.readyState !== 1) {
+          return send(socket, { type: "connect-result", ok: false, error: "The remote PC is not online." });
+        }
+
+        // Link peers both ways
+        socket.peer = targetSocket;
+        targetSocket.peer = socket;
+        peers.set(key, targetSocket);
+        peers.set(targetSocket._desklyKey, socket);
+
+        const settings = await Settings.findOne({ userId: targetDev.ownerId });
+        const owner = await User.findById(targetDev.ownerId).select("username");
+
         send(socket, {
           type: "connect-result",
           ok: true,
-          device: { publicId: host.publicId, username: owner?.username || "Unknown device" },
+          device: { publicId: targetDev.publicId, username: owner?.username || "Unknown device" },
         });
-        send(hostSocket, {
+
+        send(targetSocket, {
           type: "start-session",
           settings: settings
             ? {
@@ -127,7 +181,6 @@ export function attachSignaling(app) {
 
       if (msg.type === "signal") send(socket.peer, { type: "signal", data: msg.data });
       if (msg.type === "hangup") {
-        // Explicit hangup — clear peer state immediately, no grace window
         send(socket.peer, { type: "hangup" });
         const peerKey = socket.peer?._desklyKey;
         if (peerKey) {
@@ -140,19 +193,35 @@ export function attachSignaling(app) {
     });
 
     socket.on("close", () => {
-      // Only remove from sockets map if this is still the active socket
-      if (sockets.get(key) === socket) sockets.delete(key);
-      setOnline(user.sub, role, false);
+      sockets.delete(key);
+      if (socketsByOwner.has(userId)) {
+        socketsByOwner.get(userId).delete(socket);
+        if (socketsByOwner.get(userId).size === 0) socketsByOwner.delete(userId);
+      }
+      if (clientPublicId && socketsByPublicId.get(clientPublicId) === socket) {
+        socketsByPublicId.delete(clientPublicId);
+      }
 
-      // Don't immediately fire peer-gone — give the client grace window to reconnect
+      const remaining = socketsByOwner.get(userId);
+      if (remaining && remaining.size > 0) {
+        const nextSocket = remaining.values().next().value;
+        Device.find({ ownerId: userId }).then((devs) => {
+          for (const dev of devs) {
+            if (socketsByPublicId.get(dev.publicId) === socket) {
+              socketsByPublicId.set(dev.publicId, nextSocket);
+            }
+          }
+        }).catch(() => {});
+      } else {
+        setOnline(userId, role, false);
+      }
+
       if (socket.peer) {
         const peerSocket = socket.peer;
         const peerKey = peerSocket._desklyKey;
         const timer = setTimeout(() => {
           goneTimers.delete(key);
-          // Only fire peer-gone if the socket hasn't reconnected by now
-          if (sockets.get(key) !== socket && !sockets.has(key)) {
-            // Clean up peer map
+          if (!sockets.has(key)) {
             peers.delete(key);
             if (peerKey) peers.delete(peerKey);
             if (peerSocket.peer === socket) peerSocket.peer = null;

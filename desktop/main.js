@@ -74,6 +74,12 @@ function writeLog(level, category, message, data) {
 
 writeLog("info", "Main", `Starting Deskly. Role: ${startRole || "unspecified"}, API: ${configuredApiUrl()}`);
 
+const isHiddenArg = process.argv.some(
+  (a) => a === "--hidden" || a === "--background" || a.startsWith("--hidden=") || a.startsWith("--background=")
+);
+
+let updateTrayMenu = null;
+
 function trayImage() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1677c8"/><path d="M9 10h14v9H13l-4 4v-13z" fill="white"/><circle cx="14" cy="14.5" r="1.5" fill="#1677c8"/><circle cx="19" cy="14.5" r="1.5" fill="#1677c8"/></svg>`;
   return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
@@ -87,18 +93,48 @@ function showWindow() {
 
 function createTray() {
   tray = new Tray(trayImage());
-  tray.setToolTip(startRole === "host" ? "Deskly Host — running in background" : "Deskly");
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "Open Deskly", click: showWindow },
-    { label: "Open Log File", click: () => {
-      const { localPath, userPath } = getLogPaths();
-      shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
-    }},
-    { label: "Hide window", click: () => mainWindow?.hide() },
-    { type: "separator" },
-    { label: "Exit Deskly", click: () => { isQuitting = true; app.quit(); } },
-  ]));
-  tray.on("click", showWindow);
+  tray.setToolTip("Deskly — Ready in background");
+
+  updateTrayMenu = () => {
+    const isVisible = mainWindow && mainWindow.isVisible();
+    tray.setContextMenu(Menu.buildFromTemplate([
+      {
+        label: isVisible ? "Hide to Tray (Background Mode)" : "Open Deskly",
+        click: () => {
+          if (isVisible) mainWindow.hide();
+          else showWindow();
+        },
+      },
+      { type: "separator" },
+      { label: "Status: Online (Ready in Background)", enabled: false },
+      { type: "separator" },
+      {
+        label: "Open Log File",
+        click: () => {
+          const { localPath, userPath } = getLogPaths();
+          shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
+        },
+      },
+      { type: "separator" },
+      {
+        label: "Exit Deskly",
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]));
+  };
+
+  updateTrayMenu();
+  tray.on("click", () => {
+    if (mainWindow && mainWindow.isVisible()) {
+      mainWindow.hide();
+    } else {
+      showWindow();
+    }
+  });
+  tray.on("double-click", showWindow);
 }
 
 function createWindow() {
@@ -121,9 +157,7 @@ function createWindow() {
     height: initialHeight,
     minWidth: 780,
     minHeight: 460,
-    // A configured Host starts as a tray-only background program. The renderer
-    // asks to show this window only if first-time setup or login is needed.
-    show: startRole !== "host",
+    show: !isHiddenArg && startRole !== "host",
     backgroundColor: "#0b0f14",
     title: startRole === "host" ? "Deskly — Host" : startRole === "controller" ? "Deskly — Controller" : "Deskly",
     webPreferences: {
@@ -172,6 +206,9 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"), {
     query: { ...(startRole ? { role: startRole } : {}), apiUrl: configuredApiUrl() },
   });
+
+  mainWindow.on("show", () => updateTrayMenu?.());
+  mainWindow.on("hide", () => updateTrayMenu?.());
 
   mainWindow.on("close", (event) => {
     if (isQuitting) return;

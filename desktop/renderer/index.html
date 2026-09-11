@@ -93,22 +93,33 @@
               <button id="btn-role-host" class="role">Controlled PC (host)</button>
               <button id="btn-role-controller" class="role">Controller</button>
             </div>
-            <p class="muted" id="role-hint">Host waits for a connection. Controller types the host ID and password — no accept popup.</p>
-            <label id="background-setting" class="check hidden"><input type="checkbox" id="set-background" /> Run host in the system tray (hide this window)</label>
-            <div id="host-info" class="hidden box">
+            <p class="muted" id="role-hint">You can connect to any device or accept incoming connections at any time, regardless of selected mode.</p>
+
+            <!-- ── Allow Remote Control (Host Info) ── -->
+            <div id="host-info" class="box">
               <div class="field-header">
-                <span>Your Host ID</span>
+                <span style="font-weight:600; color:var(--text);">Your Device ID (Share to be controlled)</span>
                 <button id="btn-copy-id" class="copy-btn" title="Copy ID to clipboard">Copy ID</button>
               </div>
               <div class="id" id="host-id">—</div>
               <div class="field-header">
-                <span>Host Access Password</span>
+                <span style="font-weight:600; color:var(--text);">Access Password</span>
                 <div class="field-actions">
                   <button id="btn-toggle-pass" class="copy-btn" title="Show/Hide access password">Show</button>
                   <button id="btn-copy-pass" class="copy-btn" title="Copy access password to clipboard">Copy</button>
                 </div>
               </div>
               <div class="id small monospace" id="host-pass">••••••••</div>
+
+              <div class="btn-row" style="margin-top: 10px;">
+                <button id="btn-hide-to-tray" class="secondary" title="Run host in background as a hidden process with system tray active">
+                  🗕 Run Host in Background (Hide to Tray)
+                </button>
+              </div>
+              <label id="background-setting" class="check" style="margin-top:8px;">
+                <input type="checkbox" id="set-background" /> Auto-hide Host to System Tray on startup
+              </label>
+
               <hr class="sub-hr" />
               <label>Change Access Password
                 <input id="new-access-pass" type="password" placeholder="Enter new access password (min 4 chars)" autocomplete="new-password" />
@@ -118,12 +129,14 @@
                 <button id="btn-random-access-pass" class="secondary">Generate Random</button>
               </div>
               <p id="host-pass-msg" class="muted"></p>
-              <button id="btn-stop-host" class="danger">Stop Host &amp; log out</button>
             </div>
-            <div id="controller-box" class="hidden">
-              <label>Host ID <input id="connect-id" placeholder="123 456 789" /></label>
-              <label>Access password <input id="connect-pass" type="password" placeholder="Host access password" /></label>
-              <button id="btn-connect">Connect</button>
+
+            <!-- ── Control Remote Computer (Connect Box & History) ── -->
+            <div id="controller-box" class="box" style="margin-top: 14px;">
+              <h3 style="margin: 0 0 10px; font-size: 0.95rem; font-weight: 600; color: var(--accent);">Control Remote Computer</h3>
+              <label>Partner Device ID <input id="connect-id" placeholder="123 456 789" /></label>
+              <label>Partner Access Password <input id="connect-pass" type="password" placeholder="Access password" /></label>
+              <button id="btn-connect" style="width: 100%;">Connect</button>
               <p id="connect-error" class="error"></p>
               <div id="recent-devices" class="recent hidden">
                 <div class="recent-header">

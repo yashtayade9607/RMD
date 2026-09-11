@@ -264,17 +264,23 @@ function renderRecentDevices() {
 function applyRoleUi() {
   $("btn-role-host").classList.toggle("active", state.role === "host");
   $("btn-role-controller").classList.toggle("active", state.role === "controller");
-  $("host-info").classList.toggle("hidden", state.role !== "host");
-  $("background-setting").classList.toggle("hidden", state.role !== "host");
-  $("controller-box").classList.toggle("hidden", state.role !== "controller");
-  if (state.role === "host") setStatus("Host — waiting (no accept prompt)");
-  else if (state.role === "controller") setStatus("Controller — enter ID + password");
+  $("host-info").classList.remove("hidden");
+  $("controller-box").classList.remove("hidden");
+  $("background-setting").classList.remove("hidden");
+  renderRecentDevices();
+  if (state.role === "host") {
+    setStatus("Host — waiting (ready for incoming/outgoing)");
+    $("role-hint").textContent = "Host mode: Ready for incoming connections or direct outgoing connection.";
+  } else {
+    setStatus("Controller — ready to connect");
+    $("role-hint").textContent = "Controller mode: Enter partner ID to connect, or share your ID above.";
+  }
 }
 
 async function bootstrap() {
   log("info", "App", "Deskly starting up");
   const startRole = await window.deskly.getStartRole();
-  if (startRole) state.role = startRole;
+  state.role = startRole || state.role || "host";
   if (!state.token) {
     show("view-login");
     setStatus("Log in or create account");
@@ -287,8 +293,8 @@ async function bootstrap() {
     state.settings = me.settings || state.settings;
     state.savedAccess = await window.deskly.accessList();
     paintHome();
-    if (state.role) await openSocket();
-    if (state.role === "host" && state.settings.hostRunInBackground) {
+    await openSocket();
+    if (state.settings.hostRunInBackground) {
       await window.deskly.setBackground(true);
     }
   } catch (err) {
@@ -382,7 +388,14 @@ $("set-screen-size").onchange = () => {
 };
 $("set-background").onchange = async () => {
   await saveSettings();
-  if (state.role === "host") await window.deskly.setBackground(state.settings.hostRunInBackground);
+  if (state.settings.hostRunInBackground) {
+    await window.deskly.setBackground(true);
+  }
+};
+
+$("btn-hide-to-tray").onclick = async () => {
+  log("info", "App", "User clicked Run Host in Background (hide to tray)");
+  await window.deskly.setBackground(true);
 };
 
 $("btn-copy-id").onclick = () => {
@@ -609,14 +622,15 @@ function openSocket(isReconnect = false) {
       state.ws = null;
     }
 
-    const wsUrl = `${SIGNAL}/ws?token=${encodeURIComponent(state.token)}&role=${state.role}`;
-    log("info", "Signaling", `Connecting WS (role=${state.role}${isReconnect ? ", reconnect" : ""})`);
+    const myPublicId = state.me?.devices?.host?.publicId || "";
+    const wsUrl = `${SIGNAL}/ws?token=${encodeURIComponent(state.token)}&role=${state.role || "host"}&publicId=${encodeURIComponent(myPublicId)}`;
+    log("info", "Signaling", `Connecting WS (role=${state.role || "host"}${isReconnect ? ", reconnect" : ""})`);
     const ws = new WebSocket(wsUrl);
     state.ws = ws;
 
     ws.onopen = () => {
       state.wsReconnectDelay = 1000; // reset back-off on success
-      log("info", "Signaling", `WebSocket connected as ${state.role}`);
+      log("info", "Signaling", `WebSocket connected as ${state.role || "host"}`);
       if (isReconnect && state.wsInSession) {
         setStatus(state.role === "host" ? "Host online" : "Connected (60 FPS)");
         setSessionFeedback("🔄 Signaling reconnected");
@@ -653,8 +667,8 @@ function sendWs(msg) {
 }
 
 async function onSignal(msg) {
-  if (msg.type === "start-session" && state.role === "host") {
-    log("info", "Signaling", "Host received start-session command", msg.settings);
+  if (msg.type === "start-session") {
+    log("info", "Signaling", "Received start-session command — sharing screen", msg.settings);
     state.settings = { ...state.settings, ...msg.settings };
     await startHostSession();
   }
@@ -763,11 +777,10 @@ async function connectToHost(id, password) {
   const hostId = String(id || "").replace(/\D/g, "");
   const pass = String(password || "");
   if (!hostId || !pass) {
-    $("connect-error").textContent = "Please enter Host ID and access password.";
+    $("connect-error").textContent = "Please enter Device ID and access password.";
     return;
   }
-  log("info", "Controller", `Initiating connection to Host ${hostId}`);
-  if (state.role !== "controller") await setRole("controller");
+  log("info", "Connect", `Initiating connection to device ${hostId}`);
   await prepareControllerPeer();
   sendWs({ type: "connect", hostId, password: pass });
 }
