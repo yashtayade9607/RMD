@@ -7,4 +7,4 @@ Set fileSystem = CreateObject("Scripting.FileSystemObject")
 projectFolder = fileSystem.GetParentFolderName(WScript.ScriptFullName)
 
 shell.CurrentDirectory = projectFolder & "\desktop"
-shell.Run "cmd.exe /c npm run host -- --hidden", 0, False
+shell.Run "cmd.exe /c npm run host", 0, False
