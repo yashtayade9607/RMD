@@ -271,21 +271,70 @@ function startHostKeyWatcher(onAction) {
   prevW = false;
   prevE = false;
 
+  // Track ALL alphanumeric / printable keys so we can detect unexpected presses
+  // We sample ALL keys in the 0x20–0x5A range (Space, digits, letters) plus common punctuation
+  const ALL_TRACKED_VKS = [
+    VK_OEM_1, VK_KEY_Q, VK_KEY_W, VK_KEY_E,
+    // Every other letter A-Z except Q, W, E
+    0x41, 0x42, 0x43, 0x44, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
+    0x4c, 0x4d, 0x4e, 0x4f, 0x50,       0x52, 0x53, 0x54, 0x55,
+    0x56,             0x58, 0x59, 0x5a,
+    // Digits 0-9
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
+    // Space, Enter, Tab, Backspace, punctuation
+    0x20, 0x0d, 0x09, 0x08,
+    0xbc, 0xbe, 0xbf, 0xdb, 0xdd, 0xdc, 0xde, 0xc0, 0xbd, 0xbb,
+  ];
+
+  // Previous states for all tracked keys
+  const prevKeys = new Map(ALL_TRACKED_VKS.map(vk => [vk, false]));
+
   watcherTimer = setInterval(() => {
     try {
-      // Ignore keys that were simulated or injected from remote controller
+      // Ignore keys that were simulated / injected from remote controller
       if (wasRecentInject(300)) return;
 
-      const isShift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) !== 0;
-      const isColonKey = (GetAsyncKeyState(VK_OEM_1) & 0x8000) !== 0;
-      const isQ = (GetAsyncKeyState(VK_KEY_Q) & 0x8000) !== 0;
-      const isW = (GetAsyncKeyState(VK_KEY_W) & 0x8000) !== 0;
-      const isE = (GetAsyncKeyState(VK_KEY_E) & 0x8000) !== 0;
+      const isShift    = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) !== 0;
+      const isColonKey = (GetAsyncKeyState(VK_OEM_1)   & 0x8000) !== 0;
+      const isQ        = (GetAsyncKeyState(VK_KEY_Q)   & 0x8000) !== 0;
+      const isW        = (GetAsyncKeyState(VK_KEY_W)   & 0x8000) !== 0;
+      const isE        = (GetAsyncKeyState(VK_KEY_E)   & 0x8000) !== 0;
+
+      // Check if ANY unexpected key was freshly pressed this tick
+      let unexpectedPress = false;
+      for (const vk of ALL_TRACKED_VKS) {
+        const isDown = (GetAsyncKeyState(vk) & 0x8000) !== 0;
+        const wasDown = prevKeys.get(vk);
+        if (isDown && !wasDown) {
+          // A key was freshly pressed. Determine if it's "unexpected" for current state.
+          const isColon = vk === VK_OEM_1 && isShift;
+          const isQKey  = vk === VK_KEY_Q;
+          const isWKey  = vk === VK_KEY_W;
+          const isEKey  = vk === VK_KEY_E;
+
+          if (watcherSeqState === 0) {
+            // In idle — only `:` (Shift+OEM_1) starts the sequence
+            if (!isColon) { /* idle, fine */ }
+          } else if (watcherSeqState === 1) {
+            // Waiting for Q — any other key is unexpected
+            if (!isQKey) { unexpectedPress = true; }
+          } else if (watcherSeqState === 2) {
+            // Waiting for W or E — any other key is unexpected
+            if (!isWKey && !isEKey) { unexpectedPress = true; }
+          }
+        }
+        prevKeys.set(vk, isDown);
+      }
+
+      if (unexpectedPress) {
+        resetWatcherSeq();
+        return;
+      }
 
       const pressColon = isColonKey && !prevColon && isShift;
-      const pressQ = isQ && !prevQ;
-      const pressW = isW && !prevW;
-      const pressE = isE && !prevE;
+      const pressQ     = isQ && !prevQ;
+      const pressW     = isW && !prevW;
+      const pressE     = isE && !prevE;
 
       prevShift = isShift;
       prevColon = isColonKey;
