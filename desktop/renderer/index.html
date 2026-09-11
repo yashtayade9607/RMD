@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self' http: https: ws: wss:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;"
+    />
+    <title>Deskly</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+
+      <!-- ═══ SINGLE UNIFIED HEADER / MENU BAR ══════════════════════════════════ -->
+      <header id="app-header">
+        <!-- Brand — always visible -->
+        <div class="brand">Deskly</div>
+
+        <!-- Separator -->
+        <div class="hdr-sep"></div>
+
+        <!-- Session-only controls (revealed by enterSession, hidden by endSession) -->
+        <div id="session-controls" class="header-session hidden">
+          <span id="session-label" class="session-label-text"></span>
+          <span id="input-state" class="pill on">Input ON</span>
+          <label class="session-check"><input type="checkbox" id="session-follow-toggle" /> Follow cursors</label>
+
+          <div class="screen-fit-group">
+            <span class="screen-fit-title">Fit:</span>
+            <button id="btn-fit-adaptive" class="fit-btn active" title="Contain — preserve aspect ratio">Adaptive</button>
+            <button id="btn-fit-stretch" class="fit-btn" title="Stretch to fill window">Stretch</button>
+          </div>
+          <div class="screen-fit-group">
+            <span class="screen-fit-title">Size:</span>
+            <button id="btn-size-adaptive" class="fit-btn active" title="Native / Adaptive resolution">Native</button>
+            <button id="btn-size-1080p" class="fit-btn" title="1920×1080">1080p</button>
+            <button id="btn-size-720p" class="fit-btn" title="1280×720 (fastest)">720p</button>
+          </div>
+          <div class="screen-fit-group">
+            <span class="screen-fit-title">FPS:</span>
+            <button id="btn-fps-30" class="fit-btn" title="30 FPS (Low bandwidth)">30</button>
+            <button id="btn-fps-60" class="fit-btn active" title="60 FPS (Smooth)">60</button>
+            <button id="btn-fps-120" class="fit-btn" title="120 FPS (Ultra smooth)">120</button>
+          </div>
+        </div>
+
+        <!-- Flexible spacer pushes right section to edge -->
+        <span class="hdr-spacer"></span>
+
+        <!-- Right: feedback + status + user + actions — always visible -->
+        <div class="header-actions">
+          <span id="session-feedback" class="session-feedback-text"></span>
+          <div id="status-pill" class="pill">Starting…</div>
+          <span id="user-badge" class="pill user-badge hidden"></span>
+          <button id="btn-open-logs" class="quiet" title="View application logs">Logs</button>
+          <button id="btn-logout" class="quiet hidden">Log out</button>
+          <button id="btn-hangup" class="danger hidden">Disconnect</button>
+        </div>
+      </header>
+
+      <!-- ═══ SETUP ════════════════════════════════════════════════════════════ -->
+      <section id="view-setup" class="card hidden">
+        <h1>First-time setup</h1>
+        <p>Create the only account this app will use. One host PC, one controller PC.</p>
+        <label>Username <input id="setup-user" autocomplete="username" /></label>
+        <label>Password <input id="setup-pass" type="password" autocomplete="new-password" /></label>
+        <button id="btn-setup">Create account</button>
+        <p id="setup-error" class="error"></p>
+      </section>
+
+      <!-- ═══ LOGIN ════════════════════════════════════════════════════════════ -->
+      <section id="view-login" class="card hidden">
+        <h1>Log in</h1>
+        <label>Username <input id="login-user" autocomplete="username" /></label>
+        <label>Password <input id="login-pass" type="password" autocomplete="current-password" /></label>
+        <button id="btn-login">Log in</button>
+        <p id="login-error" class="error"></p>
+        <p class="muted">New here? <button id="btn-show-register" class="link-button">Create an account</button></p>
+      </section>
+
+      <!-- ═══ REGISTER ═════════════════════════════════════════════════════════ -->
+      <section id="view-register" class="card hidden">
+        <h1>Create account</h1>
+        <p>Create a Deskly account for this computer.</p>
+        <label>Username <input id="register-user" autocomplete="username" /></label>
+        <label>Password <input id="register-pass" type="password" autocomplete="new-password" /></label>
+        <button id="btn-register">Create account</button>
+        <p id="register-error" class="error"></p>
+        <p class="muted">Already have an account? <button id="btn-show-login" class="link-button">Log in</button></p>
+      </section>
+
+      <!-- ═══ HOME ══════════════════════════════════════════════════════════════ -->
+      <section id="view-home" class="hidden">
+        <div class="split">
+          <div class="card">
+            <h2>Remote Connection</h2>
+            <div class="role-row">
+              <button id="btn-role-host" class="role active">This PC (Host ID)</button>
+              <button id="btn-role-controller" class="role">Remote PC (Connect)</button>
+            </div>
+            <p class="muted" id="role-hint">This PC is ready to accept remote connections anytime. You can also connect to any other PC below.</p>
+            <div id="host-info" class="box">
+              <div class="field-header">
+                <span>Your Host ID (share to allow remote access)</span>
+                <button id="btn-copy-id" class="copy-btn" title="Copy ID to clipboard">Copy ID</button>
+              </div>
+              <div class="id" id="host-id">—</div>
+              <div class="field-header">
+                <span>Host Access Password</span>
+                <div class="field-actions">
+                  <button id="btn-toggle-pass" class="copy-btn" title="Show/Hide access password">Show</button>
+                  <button id="btn-copy-pass" class="copy-btn" title="Copy access password to clipboard">Copy</button>
+                </div>
+              </div>
+              <div class="id small monospace" id="host-pass">••••••••</div>
+              <hr class="sub-hr" />
+              <label>Change Access Password
+                <input id="new-access-pass" type="password" placeholder="Enter new access password (min 4 chars)" autocomplete="new-password" />
+              </label>
+              <div class="btn-row">
+                <button id="btn-save-access-pass">Save New Password</button>
+                <button id="btn-random-access-pass" class="secondary">Generate Random</button>
+              </div>
+              <p id="host-pass-msg" class="muted"></p>
+              <button id="btn-stop-host" class="danger">Stop Host &amp; log out</button>
+            </div>
+            <div id="controller-box" class="box" style="margin-top: 14px;">
+              <h3 style="margin-top: 0; font-size: 15px;">Connect to Another PC</h3>
+              <label>Host ID <input id="connect-id" placeholder="123 456 789" /></label>
+              <label>Access password <input id="connect-pass" type="password" placeholder="Host access password" /></label>
+              <button id="btn-connect">Connect</button>
+              <p id="connect-error" class="error"></p>
+              <div id="recent-devices" class="recent">
+                <div class="recent-header">
+                  <span class="muted">Saved Devices (Lifetime Instant Access)</span>
+                  <span id="saved-count" class="badge">0</span>
+                </div>
+                <div id="recent-list" class="recent-grid"></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <h2>Settings</h2>
+            <label class="check"><input type="checkbox" id="set-auto-start" /> Start Deskly with Windows (Silent in Tray)</label>
+            <label class="check"><input type="checkbox" id="set-background" /> Run host in background (system tray only)</label>
+            <label class="check"><input type="checkbox" id="set-follow" /> Mouse follow (both cursors follow each other)</label>
+            <label class="check"><input type="checkbox" id="set-winkey" checked /> Block Windows key from controller</label>
+            <label>Framerate (FPS)
+              <select id="set-fps">
+                <option value="30">30 FPS (bandwidth saving)</option>
+                <option value="60" selected>60 FPS (standard)</option>
+                <option value="120">120 FPS (ultra smooth)</option>
+              </select>
+            </label>
+            <label>Picture quality
+              <select id="set-quality">
+                <option value="smooth">Smooth (faster)</option>
+                <option value="balanced" selected>Balanced</option>
+                <option value="sharp">Sharp (more detail)</option>
+              </select>
+            </label>
+            <label>Screen capture profile
+              <select id="set-screen-size">
+                <option value="adaptive" selected>Adaptive (recommended)</option>
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
+              </select>
+            </label>
+            <p class="muted">
+              <strong>Controller:</strong> Pause input: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> or type <kbd>:qw</kbd><br />
+              Resume input: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> or type <kbd>:qe</kbd><br />
+              <strong>Host:</strong> Block remote: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> or type <kbd>:qw</kbd> &nbsp;|&nbsp; Allow: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> or type <kbd>:qe</kbd>
+            </p>
+            <p class="ok" id="save-msg"></p>
+            <hr />
+            <h2>Account Profile</h2>
+            <label>Username (synced across all connected devices)
+              <div class="row-input">
+                <input id="profile-username" autocomplete="username" />
+                <button id="btn-save-username" class="compact">Update</button>
+              </div>
+            </label>
+            <p id="profile-username-msg" class="muted"></p>
+            <hr />
+            <h2>Change Account Password</h2>
+            <label>Current password <input id="change-current-pass" type="password" autocomplete="current-password" /></label>
+            <label>New password <input id="change-new-pass" type="password" autocomplete="new-password" /></label>
+            <button id="btn-change-password">Change password</button>
+            <p id="change-password-msg" class="error"></p>
+            <hr />
+            <h2>Diagnostics &amp; Logs</h2>
+            <p class="muted">All system actions and connection events are saved to <code>deskly.log</code>.</p>
+            <div class="btn-row">
+              <button id="btn-settings-open-logs" class="secondary">View Logs</button>
+              <button id="btn-settings-open-file" class="secondary">Open in Notepad</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ SESSION VIEW (just the stage — header is the toolbar) ═══════════ -->
+      <section id="view-session" class="hidden session">
+        <div id="stage">
+          <video id="remote-video" autoplay playsinline></video>
+          <div id="local-cmd" class="hidden">:<span id="local-cmd-text"></span></div>
+          <!-- Host cursor indicator — skyblue glowing dot directly over host pointer (controller only) -->
+          <div id="cursor-host" class="cursor-host-dot hidden" title="Host cursor"></div>
+        </div>
+      </section>
+
+      <!-- ═══ LOGS MODAL ════════════════════════════════════════════════════════ -->
+      <div id="modal-logs" class="modal-overlay hidden">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h2>System Logs</h2>
+            <button id="btn-close-logs" class="copy-btn">✕ Close</button>
+          </div>
+          <p class="muted">Live log entries automatically saved to <code>deskly.log</code>:</p>
+          <pre id="log-content" class="log-viewer">Loading logs…</pre>
+          <div class="modal-footer">
+            <button id="btn-open-log-file" class="secondary">Open Log File (Notepad)</button>
+            <button id="btn-refresh-logs" class="secondary">Refresh</button>
+            <button id="btn-clear-logs" class="danger">Clear Logs</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

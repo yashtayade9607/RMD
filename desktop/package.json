@@ -1,0 +1,53 @@
+{
+  "name": "deskly-desktop",
+  "productName": "Deskly",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "host": "electron . --role=host",
+    "controller": "electron . --role=controller",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {
+    "koffi": "^2.10.1"
+  },
+  "devDependencies": {
+    "electron": "^34.5.8",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.deskly.remote",
+    "productName": "Deskly",
+    "directories": {
+      "output": "release-final"
+    },
+    "files": [
+      "**/*",
+      "!release/**",
+      "!release-final/**"
+    ],
+    "extraResources": [
+      {
+        "from": "../deskly.config.json",
+        "to": "deskly.config.json"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Deskly-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
