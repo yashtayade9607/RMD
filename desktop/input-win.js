@@ -201,6 +201,12 @@ function releaseAllKeys() {
     }
   }
   activeInjectedKeys.clear();
+  const modifierVKs = [0x10, 0x11, 0x12, 0x5b, 0x5c, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5];
+  for (const vk of modifierVKs) {
+    try {
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, DESKLY_INJECTED_EXTRA_INFO);
+    } catch {}
+  }
   try {
     mouse_event(MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_MIDDLEUP, 0, 0, 0, DESKLY_INJECTED_EXTRA_INFO);
   } catch {
@@ -209,6 +215,10 @@ function releaseAllKeys() {
 }
 
 function applyEvent(evt, options = {}) {
+  if (evt.kind === "release-all") {
+    releaseAllKeys();
+    return;
+  }
   const blockWin = options.blockWinKey !== false;
   if (evt.kind === "cursor-delta") {
     moveCursorBy(evt.dx, evt.dy);

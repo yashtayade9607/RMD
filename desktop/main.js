@@ -170,9 +170,22 @@ function createWindow() {
     query: { ...(startRole ? { role: startRole } : {}), apiUrl: configuredApiUrl() },
   });
 
+  mainWindow.on("blur", () => {
+    try { input.releaseAllKeys(); } catch {}
+  });
+
+  mainWindow.on("minimize", () => {
+    try { input.releaseAllKeys(); } catch {}
+  });
+
+  mainWindow.on("hide", () => {
+    try { input.releaseAllKeys(); } catch {}
+  });
+
   mainWindow.on("close", (event) => {
     if (isQuitting) return;
     event.preventDefault();
+    try { input.releaseAllKeys(); } catch {}
     mainWindow.hide();
   });
 }

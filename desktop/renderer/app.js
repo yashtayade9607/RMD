@@ -1245,64 +1245,31 @@ function updateInputPill() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  INPUT CONTROL & SHORTCUTS (Host & Controller)
+//  HOST REMOTE INPUT CONTROL (:qw to block, :qe to allow)
 // ══════════════════════════════════════════════════════════════════════════════
 
 function hostPauseRemoteInput() {
   if (state.remoteInputPaused) return;
   state.remoteInputPaused = true;
-  log("info", "Host", "Host blocked remote input");
+  log("info", "Host", "Host blocked remote input via :qw / Ctrl+Alt+Q");
   if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
   dcSend({ t: "input-feedback", paused: true });
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED");
+  setSessionFeedback("⛔ Remote input BLOCKED by Host");
 }
 
 function hostResumeRemoteInput() {
   if (!state.remoteInputPaused) return;
   state.remoteInputPaused = false;
-  log("info", "Host", "Host resumed remote input");
+  log("info", "Host", "Host resumed remote input via :qe / Ctrl+Alt+E");
   dcSend({ t: "input-feedback", paused: false });
   updateInputPill();
-  setSessionFeedback("✅ Remote input ALLOWED");
-}
-
-function controllerPauseInput() {
-  state.inputArmed = false;
-  log("info", "Controller", "Controller paused sending input");
-  updateInputPill();
-  setSessionFeedback("Input PAUSED");
-}
-
-function controllerResumeInput() {
-  state.inputArmed = true;
-  log("info", "Controller", "Controller resumed sending input");
-  updateInputPill();
-  setSessionFeedback("Input ON");
-}
-
-function localCommand(token) {
-  if (token === "qw") {
-    if (state.isHosting) hostPauseRemoteInput();
-    else controllerPauseInput();
-    return true;
-  }
-  if (token === "qe") {
-    if (state.isHosting) hostResumeRemoteInput();
-    else controllerResumeInput();
-    return true;
-  }
-  return false;
+  setSessionFeedback("✅ Remote input ALLOWED by Host");
 }
 
 window.deskly.onHotkey((name) => {
-  if (state.isHosting) {
-    if (name === "pause") hostPauseRemoteInput();
-    if (name === "resume") hostResumeRemoteInput();
-  } else {
-    if (name === "pause") controllerPauseInput();
-    if (name === "resume") controllerResumeInput();
-  }
+  if (name === "pause") hostPauseRemoteInput();
+  if (name === "resume") hostResumeRemoteInput();
 });
 
 const video = $("remote-video");
@@ -1385,6 +1352,7 @@ video.addEventListener("loadedmetadata", updateCursorPositions);
 video.addEventListener("resize", updateCursorPositions);
 
 let lastSentMouseAt = 0;
+let isMouseDownOnController = false;
 
 video.addEventListener("mousemove", (ev) => {
   if (state.isHosting) return;
@@ -1406,12 +1374,14 @@ video.addEventListener("mousemove", (ev) => {
 video.addEventListener("mousedown", (ev) => {
   if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
   ev.preventDefault();
+  isMouseDownOnController = true;
   const p = videoNorm(ev);
   dcSend({ t: "in", e: { kind: "mouse-button", button: ev.button, down: true, x: p.x, y: p.y } });
 });
 
-video.addEventListener("mouseup", (ev) => {
-  if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
+window.addEventListener("mouseup", (ev) => {
+  if (state.isHosting || !isMouseDownOnController) return;
+  isMouseDownOnController = false;
   const p = videoNorm(ev);
   dcSend({ t: "in", e: { kind: "mouse-button", button: ev.button, down: false, x: p.x, y: p.y } });
 });
@@ -1423,54 +1393,22 @@ video.addEventListener("wheel", (ev) => {
 
 video.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
+function releaseAllControllerInput() {
+  if (state.wsInSession && !state.isHosting) {
+    isMouseDownOnController = false;
+    dcSend({ t: "in", e: { kind: "release-all" } });
+  }
+}
+
+window.addEventListener("blur", releaseAllControllerInput);
+window.addEventListener("mouseleave", releaseAllControllerInput);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) releaseAllControllerInput();
+});
+
 const WIN_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 
-let ctrlCmdBuffer = "";
-let ctrlCmdTimer = null;
-
 window.addEventListener("keydown", (ev) => {
-  const target = ev.target;
-  const isInputFocused = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
-
-  // Global hotkeys Ctrl+Alt+Q / Ctrl+Alt+E
-  if (ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
-    ev.preventDefault();
-    if (ev.code === "KeyQ") {
-      if (state.isHosting) hostPauseRemoteInput();
-      else controllerPauseInput();
-    } else {
-      if (state.isHosting) hostResumeRemoteInput();
-      else controllerResumeInput();
-    }
-    return;
-  }
-
-  // Non-blocking rolling sequence detector for :qw and :qe
-  if (!isInputFocused) {
-    if (ctrlCmdTimer) clearTimeout(ctrlCmdTimer);
-    ctrlCmdTimer = setTimeout(() => { ctrlCmdBuffer = ""; }, 2000);
-
-    if (ev.key === ":") {
-      ctrlCmdBuffer = ":";
-    } else if (ctrlCmdBuffer === ":" && (ev.key === "q" || ev.key === "Q")) {
-      ctrlCmdBuffer = ":q";
-    } else if (ctrlCmdBuffer === ":q" && (ev.key === "w" || ev.key === "W")) {
-      ctrlCmdBuffer = "";
-      ev.preventDefault();
-      ev.stopPropagation();
-      localCommand("qw");
-      return;
-    } else if (ctrlCmdBuffer === ":q" && (ev.key === "e" || ev.key === "E")) {
-      ctrlCmdBuffer = "";
-      ev.preventDefault();
-      ev.stopPropagation();
-      localCommand("qe");
-      return;
-    } else if (ev.key !== "Shift" && ev.key !== "Control" && ev.key !== "Alt") {
-      ctrlCmdBuffer = "";
-    }
-  }
-
   if (state.isHosting) return;
   if (WIN_CODES.has(ev.code) || ev.key === "Meta") { ev.preventDefault(); return; }
   if (!state.inputArmed || state.remoteInputPaused) return;
