@@ -1,0 +1,13 @@
+{
+  "name": "deskly",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Personal P2P remote desktop for one host and one controller",
+  "scripts": {
+    "install:all": "npm install --prefix api && npm install --prefix desktop",
+    "api": "npm start --prefix api",
+    "host": "npm run host --prefix desktop",
+    "controller": "npm run controller --prefix desktop",
+    "desktop:installer": "npm run dist --prefix desktop"
+  }
+}
