@@ -45,6 +45,14 @@ const GetAsyncKeyState = user32.func("int16 __stdcall GetAsyncKeyState(int vKey)
 const GetKeyState = user32.func("int16 __stdcall GetKeyState(int vKey)");
 const MapVirtualKeyW = user32.func("uint32 __stdcall MapVirtualKeyW(uint32 uCode, uint32 uMapType)");
 
+const RAWINPUTDEVICELIST = koffi.struct("RAWINPUTDEVICELIST", {
+  hDevice: "uintptr",
+  dwType: "uint32",
+});
+
+const GetRawInputDeviceList = user32.func("uint32 __stdcall GetRawInputDeviceList(uintptr_t pList, _Inout_ uint32* pCount, uint32 cbSize)");
+const GetRawInputDeviceInfoW = user32.func("uint32 __stdcall GetRawInputDeviceInfoW(uintptr hDevice, uint32 uiCommand, uintptr pData, _Inout_ uint32* pcbSize)");
+
 const WH_KEYBOARD_LL = 13;
 const WM_KEYDOWN = 0x0100;
 const WM_KEYUP = 0x0101;
@@ -330,43 +338,56 @@ function isVkMatch(vk, keyId) {
   return def.vks.includes(vk);
 }
 
+let hostPressedKeys = new Set();
+
 function keyboardHookProc(nCode, wParam, lParam) {
-  if (nCode >= 0 && (wParam === WM_KEYUP || wParam === WM_SYSKEYUP)) {
+  if (nCode >= 0) {
     const flags = lParam.flags;
     const extraInfo = lParam.dwExtraInfo;
     const isDesklyInjected =
       ((flags & 0x10) !== 0) || // LLKHF_INJECTED
       ((flags & 0x02) !== 0) || // LLKHF_LOWER_IL_INJECTED
-      (Number(extraInfo) === DESKLY_INJECTED_EXTRA_INFO) ||
-      (wasRecentInject(350));
+      (Number(extraInfo) === DESKLY_INJECTED_EXTRA_INFO);
 
     // ONLY process physical Host keystrokes — ignore controller injected input!
     if (!isDesklyInjected) {
       const vk = lParam.vkCode;
-      const now = Date.now();
-      if (now - lastHostKeyTime > 1500) {
-        pauseTapCount = 0;
-        resumeTapCount = 0;
-      }
-      lastHostKeyTime = now;
+      const isKeyDown = (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN);
+      const isKeyUp = (wParam === WM_KEYUP || wParam === WM_SYSKEYUP);
 
-      if (isVkMatch(vk, configuredPauseKeyId)) {
-        resumeTapCount = 0;
-        pauseTapCount++;
-        if (pauseTapCount >= 4) {
-          pauseTapCount = 0;
-          if (onSequenceAction) onSequenceAction("pause");
+      if (isKeyDown) {
+        // Ignore OS auto-repeat events while a key is held down
+        if (!hostPressedKeys.has(vk)) {
+          hostPressedKeys.add(vk);
+
+          const now = Date.now();
+          if (now - lastHostKeyTime > 2000) {
+            pauseTapCount = 0;
+            resumeTapCount = 0;
+          }
+          lastHostKeyTime = now;
+
+          if (isVkMatch(vk, configuredPauseKeyId)) {
+            resumeTapCount = 0;
+            pauseTapCount++;
+            if (pauseTapCount >= 4) {
+              pauseTapCount = 0;
+              if (onSequenceAction) onSequenceAction("pause");
+            }
+          } else if (isVkMatch(vk, configuredResumeKeyId)) {
+            pauseTapCount = 0;
+            resumeTapCount++;
+            if (resumeTapCount >= 4) {
+              resumeTapCount = 0;
+              if (onSequenceAction) onSequenceAction("resume");
+            }
+          } else {
+            pauseTapCount = 0;
+            resumeTapCount = 0;
+          }
         }
-      } else if (isVkMatch(vk, configuredResumeKeyId)) {
-        pauseTapCount = 0;
-        resumeTapCount++;
-        if (resumeTapCount >= 4) {
-          resumeTapCount = 0;
-          if (onSequenceAction) onSequenceAction("resume");
-        }
-      } else {
-        pauseTapCount = 0;
-        resumeTapCount = 0;
+      } else if (isKeyUp) {
+        hostPressedKeys.delete(vk);
       }
     }
   }
@@ -421,16 +442,55 @@ function toggleLedKey(def) {
   keybd_event(def.vk, def.scan, flagsUp, DESKLY_INJECTED_EXTRA_INFO);
 }
 
+function getSystemKeyboardLedCount() {
+  try {
+    const count = [32];
+    const listBuf = Buffer.alloc(32 * 16);
+    if (GetRawInputDeviceList(koffi.address(listBuf), count, 16) === 0 || count[0] === 0) {
+      return 3;
+    }
+    let maxIndicators = 0;
+    const infoBuf = Buffer.alloc(32);
+    const sz = [32];
+    for (let i = 0; i < count[0]; i++) {
+      const dwType = listBuf.readUInt32LE(i * 16 + 8);
+      if (dwType === 1) { // 1 = RIM_TYPEKEYBOARD
+        const hDev = listBuf.readBigUInt64LE(i * 16);
+        infoBuf.writeUInt32LE(32, 0);
+        sz[0] = 32;
+        const res = GetRawInputDeviceInfoW(hDev, 0x2000000b, koffi.address(infoBuf), sz);
+        if (res !== 4294967295) {
+          const indicators = infoBuf.readUInt32LE(24);
+          if (indicators > maxIndicators) {
+            maxIndicators = indicators;
+          }
+        }
+      }
+    }
+    return maxIndicators;
+  } catch {
+    return 3;
+  }
+}
+
 function getAvailableLeds() {
   const leds = [];
+  const systemLedCount = getSystemKeyboardLedCount();
+
   for (const [key, def] of Object.entries(LED_DEFS)) {
     try {
       const scan = MapVirtualKeyW(def.vk, 0);
-      if (scan > 0 || def.scan > 0) {
-        leds.push({ id: def.id, name: def.name });
+      if (scan > 0) {
+        if (def.id === "caps") {
+          if (systemLedCount >= 1) leds.push({ id: def.id, name: def.name });
+        } else if (def.id === "num") {
+          if (systemLedCount >= 2) leds.push({ id: def.id, name: def.name });
+        } else if (def.id === "scroll") {
+          if (systemLedCount >= 3) leds.push({ id: def.id, name: def.name });
+        }
       }
     } catch {
-      leds.push({ id: def.id, name: def.name });
+      /* ignore */
     }
   }
   return leds;
