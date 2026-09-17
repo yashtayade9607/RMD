@@ -1507,6 +1507,7 @@ function updateInputPill() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function hostPauseRemoteInput() {
+  if (state.remoteInputPaused) return;
   state.remoteInputPaused = true;
   log("info", "Host", "Host blocked remote input");
   if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
@@ -1514,18 +1515,19 @@ function hostPauseRemoteInput() {
   dcSendCursor({ t: "input-feedback", paused: true });
   sendWs({ type: "signal", data: { kind: "input-feedback", paused: true } });
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED");
+  setSessionFeedback("⛔ Remote input BLOCKED (Alt x4 to allow)");
   triggerLedBlink("pause");
 }
 
 function hostResumeRemoteInput() {
+  if (!state.remoteInputPaused) return;
   state.remoteInputPaused = false;
   log("info", "Host", "Host resumed remote input");
   dcSend({ t: "input-feedback", paused: false });
   dcSendCursor({ t: "input-feedback", paused: false });
   sendWs({ type: "signal", data: { kind: "input-feedback", paused: false } });
   updateInputPill();
-  setSessionFeedback("✅ Remote input ALLOWED");
+  setSessionFeedback("✅ Remote input ALLOWED (Ctrl x4 to block)");
   triggerLedBlink("resume");
 }
 
@@ -1560,7 +1562,7 @@ function controllerResumeInput() {
 const btnToggleInput = $("btn-toggle-input");
 if (btnToggleInput) {
   btnToggleInput.onclick = () => {
-    if (state.isHosting || state.role === "host") {
+    if (state.isHosting) {
       if (state.remoteInputPaused) hostResumeRemoteInput();
       else hostPauseRemoteInput();
     } else {
@@ -1577,7 +1579,7 @@ if (btnToggleInput) {
 const inputStatePill = $("input-state");
 if (inputStatePill) {
   inputStatePill.onclick = () => {
-    if (state.isHosting || state.role === "host") {
+    if (state.isHosting) {
       if (state.remoteInputPaused) hostResumeRemoteInput();
       else hostPauseRemoteInput();
     } else {
@@ -1592,6 +1594,10 @@ if (inputStatePill) {
 }
 
 window.deskly.onHotkey((name) => {
+  // The WH_KEYBOARD_LL hook and global shortcuts fire on every machine.
+  // Only act here when this instance is the HOST — the controller uses
+  // the toolbar GUI button and the Ctrl+Alt+Q/E keydown check instead.
+  if (!state.isHosting) return;
   if (name === "pause") hostPauseRemoteInput();
   if (name === "resume") hostResumeRemoteInput();
 });
