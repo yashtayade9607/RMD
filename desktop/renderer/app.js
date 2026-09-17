@@ -1364,13 +1364,12 @@ if (inputStatePill) {
 }
 
 window.deskly.onHotkey((name) => {
-  if (state.isHosting) {
-    if (name === "pause") hostPauseRemoteInput();
-    if (name === "resume") hostResumeRemoteInput();
-  } else {
-    if (name === "pause") controllerPauseInput();
-    if (name === "resume") controllerResumeInput();
-  }
+  // The WH_KEYBOARD_LL hook and global shortcuts fire on every machine.
+  // Only act here when this instance is the HOST — the controller uses
+  // the toolbar GUI button and the Ctrl+Alt+Q/E keydown check instead.
+  if (!state.isHosting) return;
+  if (name === "pause") hostPauseRemoteInput();
+  if (name === "resume") hostResumeRemoteInput();
 });
 
 const video = $("remote-video");
