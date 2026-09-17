@@ -82,6 +82,24 @@ function showWindow() {
   mainWindow.focus();
 }
 
+function setHostAutoLaunch(enabled) {
+  if (process.platform !== "win32") return false;
+
+  // In development Electron needs the app directory as its first argument;
+  // packaged builds launch the installed executable directly.
+  const args = app.isPackaged ? ["--role=host"] : [path.resolve(__dirname), "--role=host"];
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!enabled, args });
+    writeLog("info", "Startup", enabled
+      ? "Host background agent will start automatically at Windows sign-in"
+      : "Host background agent removed from Windows sign-in startup");
+    return true;
+  } catch (err) {
+    writeLog("error", "Startup", `Could not update Windows startup: ${err.message}`);
+    return false;
+  }
+}
+
 function createTray() {
   tray = new Tray(trayImage());
   tray.setToolTip(startRole === "host" ? "Deskly Host — running in background" : "Deskly");
@@ -242,9 +260,10 @@ ipcMain.handle("deskly:show-window", () => {
 });
 
 ipcMain.handle("deskly:set-background", (_evt, enabled) => {
+  const startAtLogin = setHostAutoLaunch(enabled);
   if (enabled) mainWindow?.hide();
   else showWindow();
-  return { ok: true, runningInBackground: !!enabled };
+  return { ok: startAtLogin || process.platform !== "win32", runningInBackground: !!enabled, startAtLogin };
 });
 
 ipcMain.handle("deskly:release-all-keys", () => {
