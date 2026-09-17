@@ -1057,7 +1057,7 @@ async function onControlMessage(msg) {
   if (!state.isHosting) {
     if (msg.t === "host-cursor" && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
       state.hostCursor = { x: msg.x, y: msg.y };
-      if (state.settings.mouseFollow && state.inputArmed && !state.remoteInputPaused) {
+      if (state.settings.mouseFollow && !state.remoteInputPaused) {
         state.suppressSendMouseMoveUntil = Date.now() + 35;
         const g = getGeometry();
         const clientX = g.videoLeft + msg.x * g.videoWidth;
@@ -1295,7 +1295,7 @@ function hostPauseRemoteInput() {
   if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
   dcSend({ t: "input-feedback", paused: true });
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED (Alt 4x to allow)");
+  setSessionFeedback("⛔ Remote input BLOCKED (Alt x4 to allow)");
 }
 
 function hostResumeRemoteInput() {
@@ -1304,7 +1304,7 @@ function hostResumeRemoteInput() {
   log("info", "Host", "Host resumed remote input");
   dcSend({ t: "input-feedback", paused: false });
   updateInputPill();
-  setSessionFeedback("✅ Remote input ALLOWED (Ctrl 4x to block)");
+  setSessionFeedback("✅ Remote input ALLOWED (Ctrl x4 to block)");
 }
 
 function controllerPauseInput() {
@@ -1315,17 +1315,15 @@ function controllerPauseInput() {
   dcSend({ t: "in", e: { kind: "key", code: "ControlRight", down: false } });
   dcSend({ t: "in", e: { kind: "key", code: "AltLeft", down: false } });
   dcSend({ t: "in", e: { kind: "key", code: "AltRight", down: false } });
-  dcSend({ t: "in", e: { kind: "key", code: "ShiftLeft", down: false } });
-  dcSend({ t: "in", e: { kind: "key", code: "ShiftRight", down: false } });
   updateInputPill();
-  setSessionFeedback("Input PAUSED");
+  setSessionFeedback("Input PAUSED (Alt x4 to resume)");
 }
 
 function controllerResumeInput() {
   state.inputArmed = true;
   log("info", "Controller", "Controller resumed sending input");
   updateInputPill();
-  setSessionFeedback("Input ON");
+  setSessionFeedback("Input ON (Ctrl x4 to pause)");
 }
 
 // Controller GUI buttons to start & pause input
@@ -1446,17 +1444,22 @@ window.addEventListener("resize", updateCursorPositions);
 video.addEventListener("loadedmetadata", updateCursorPositions);
 video.addEventListener("resize", updateCursorPositions);
 
+let lastSentMouseAt = 0;
+
 video.addEventListener("mousemove", (ev) => {
   if (state.isHosting) return;
-  if (!state.inputArmed || state.remoteInputPaused) return;
   if (Date.now() < state.suppressSendMouseMoveUntil) return;
 
   const p = videoNorm(ev);
 
-  const now = performance.now();
-  if (now - lastSentMouseAt >= 7) {
-    lastSentMouseAt = now;
-    dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
+  if (state.inputArmed && !state.remoteInputPaused) {
+    const now = performance.now();
+    if (now - lastSentMouseAt >= 7) {
+      lastSentMouseAt = now;
+      dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
+    }
+  } else if (state.settings.mouseFollow) {
+    dcSendCursor({ t: "cursor", x: p.x, y: p.y });
   }
 });
 
@@ -1503,8 +1506,8 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
-  // Host-side 4x Ctrl (block) / 4x Alt (allow) tap detection
-  if (state.isHosting && !isInputFocused && !ev.repeat) {
+  // 4x Ctrl (pause) / 4x Alt (resume) tap detection
+  if (!isInputFocused && !ev.repeat) {
     if (tapResetTimer) clearTimeout(tapResetTimer);
     tapResetTimer = setTimeout(() => {
       ctrlTapCount = 0;
@@ -1522,7 +1525,8 @@ window.addEventListener("keydown", (ev) => {
         if (tapResetTimer) clearTimeout(tapResetTimer);
         ev.preventDefault();
         ev.stopPropagation();
-        hostPauseRemoteInput();
+        if (state.isHosting) hostPauseRemoteInput();
+        else controllerPauseInput();
         return;
       }
     } else if (isAlt) {
@@ -1533,7 +1537,8 @@ window.addEventListener("keydown", (ev) => {
         if (tapResetTimer) clearTimeout(tapResetTimer);
         ev.preventDefault();
         ev.stopPropagation();
-        hostResumeRemoteInput();
+        if (state.isHosting) hostResumeRemoteInput();
+        else controllerResumeInput();
         return;
       }
     } else {
