@@ -26,6 +26,8 @@ const state = {
     hostRunInBackground: false,
     pauseLed: localStorage.getItem("desklyPauseLed") || "none",
     resumeLed: localStorage.getItem("desklyResumeLed") || "none",
+    pauseShortcutKey: localStorage.getItem("desklyPauseShortcutKey") || "ctrl",
+    resumeShortcutKey: localStorage.getItem("desklyResumeShortcutKey") || "alt",
     recentDevices: [],
   },
   ws: null,
@@ -73,16 +75,126 @@ async function initLedDropdowns() {
       pauseSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
         leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
       pauseSelect.value = curr;
+      pauseSelect.onchange = () => {
+        state.settings.pauseLed = pauseSelect.value;
+        localStorage.setItem("desklyPauseLed", pauseSelect.value);
+      };
     }
     if (resumeSelect && leds && leds.length) {
       const curr = state.settings.resumeLed || resumeSelect.value || "none";
       resumeSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
         leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
       resumeSelect.value = curr;
+      resumeSelect.onchange = () => {
+        state.settings.resumeLed = resumeSelect.value;
+        localStorage.setItem("desklyResumeLed", resumeSelect.value);
+      };
     }
   } catch (err) {
     log("warn", "LED", `Failed to initialize LED list: ${err.message}`);
   }
+}
+
+async function initShortcutDropdowns() {
+  if (!window.deskly?.getAvailableShortcutKeys) return;
+  try {
+    const keys = await window.deskly.getAvailableShortcutKeys();
+    const pauseSelect = $("set-pause-shortcut");
+    const resumeSelect = $("set-resume-shortcut");
+    if (pauseSelect && resumeSelect && keys && keys.length) {
+      const optionsHtml = keys
+        .map((k) => `<option value="${k.id}">${k.name}</option>`)
+        .join("");
+
+      pauseSelect.innerHTML = optionsHtml;
+      resumeSelect.innerHTML = optionsHtml;
+
+      pauseSelect.value = state.settings.pauseShortcutKey || "ctrl";
+      resumeSelect.value = state.settings.resumeShortcutKey || "alt";
+
+      if (pauseSelect.value === resumeSelect.value) {
+        const altOpt = keys.find((k) => k.id !== pauseSelect.value);
+        if (altOpt) {
+          resumeSelect.value = altOpt.id;
+          state.settings.resumeShortcutKey = altOpt.id;
+          localStorage.setItem("desklyResumeShortcutKey", altOpt.id);
+        }
+      }
+
+      updateShortcutDropdownDisabling();
+      if (window.deskly?.setShortcutKeys) {
+        window.deskly.setShortcutKeys(pauseSelect.value, resumeSelect.value);
+      }
+
+      pauseSelect.onchange = () => handleShortcutKeyChange("pause");
+      resumeSelect.onchange = () => handleShortcutKeyChange("resume");
+    }
+  } catch (err) {
+    log("warn", "Shortcut", `Failed to initialize shortcut keys: ${err.message}`);
+  }
+}
+
+function updateShortcutDropdownDisabling() {
+  const pauseSelect = $("set-pause-shortcut");
+  const resumeSelect = $("set-resume-shortcut");
+  const errorMsg = $("shortcut-error-msg");
+  if (!pauseSelect || !resumeSelect) return;
+
+  const pVal = pauseSelect.value;
+  const rVal = resumeSelect.value;
+
+  for (const opt of resumeSelect.options) {
+    opt.disabled = opt.value === pVal;
+  }
+  for (const opt of pauseSelect.options) {
+    opt.disabled = opt.value === rVal;
+  }
+
+  if (pVal === rVal) {
+    if (errorMsg) {
+      errorMsg.textContent = "Pause and Resume keys cannot be the same key. Please choose distinct keys.";
+      errorMsg.classList.remove("hidden");
+    }
+  } else {
+    if (errorMsg) errorMsg.classList.add("hidden");
+  }
+}
+
+function handleShortcutKeyChange(changedTarget) {
+  const pauseSelect = $("set-pause-shortcut");
+  const resumeSelect = $("set-resume-shortcut");
+  if (!pauseSelect || !resumeSelect) return;
+
+  let pVal = pauseSelect.value;
+  let rVal = resumeSelect.value;
+
+  if (pVal === rVal) {
+    const options = (changedTarget === "pause" ? resumeSelect : pauseSelect).options;
+    for (const opt of options) {
+      if (opt.value !== (changedTarget === "pause" ? pVal : rVal)) {
+        if (changedTarget === "pause") {
+          resumeSelect.value = opt.value;
+          rVal = opt.value;
+        } else {
+          pauseSelect.value = opt.value;
+          pVal = opt.value;
+        }
+        break;
+      }
+    }
+  }
+
+  state.settings.pauseShortcutKey = pVal;
+  state.settings.resumeShortcutKey = rVal;
+  localStorage.setItem("desklyPauseShortcutKey", pVal);
+  localStorage.setItem("desklyResumeShortcutKey", rVal);
+
+  if (window.deskly?.setShortcutKeys) {
+    window.deskly.setShortcutKeys(pVal, rVal);
+  }
+
+  updateShortcutDropdownDisabling();
+  log("info", "Shortcut", `Updated host shortcuts: Pause=${pVal}, Resume=${rVal}`);
 }
 
 function log(level, category, message, data) {
@@ -194,6 +306,9 @@ function paintHome() {
   $("set-background").checked = !!state.settings.hostRunInBackground;
   if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
   if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
+  if ($("set-pause-shortcut")) $("set-pause-shortcut").value = state.settings.pauseShortcutKey || "ctrl";
+  if ($("set-resume-shortcut")) $("set-resume-shortcut").value = state.settings.resumeShortcutKey || "alt";
+  updateShortcutDropdownDisabling();
   renderRecentDevices();
 }
 
@@ -323,6 +438,7 @@ async function bootstrap() {
     state.settings = me.settings || state.settings;
     state.savedAccess = await window.deskly.accessList();
     await initLedDropdowns();
+    await initShortcutDropdowns();
     paintHome();
     await openSocket();
     if (state.role === "host" && state.settings.hostRunInBackground) {

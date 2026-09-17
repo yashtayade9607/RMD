@@ -213,6 +213,22 @@ app.on("will-quit", () => {
   writeLog("info", "Main", "Deskly closing");
 });
 
+ipcMain.handle("deskly:get-shortcut-keys", () => {
+  try {
+    return input.getAvailableShortcutKeys();
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("deskly:set-shortcut-keys", (_event, pauseKey, resumeKey) => {
+  try {
+    return input.setShortcutKeys(pauseKey, resumeKey);
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle("deskly:get-leds", () => {
   try {
     return input.getAvailableLeds();

@@ -184,9 +184,26 @@
                 <button id="btn-test-resume-led" class="compact" type="button" title="Test blink for 3 seconds">Test (3s)</button>
               </div>
             </label>
+            <label>Pause Input Shortcut Key (press 4× consecutively)
+              <select id="set-pause-shortcut">
+                <option value="ctrl">Control (Ctrl)</option>
+                <option value="caps">Caps Lock (LED)</option>
+                <option value="num">Num Lock (LED)</option>
+                <option value="scroll">Scroll Lock (LED)</option>
+              </select>
+            </label>
+            <label>Resume Input Shortcut Key (press 4× consecutively)
+              <select id="set-resume-shortcut">
+                <option value="alt">Alt</option>
+                <option value="caps">Caps Lock (LED)</option>
+                <option value="num">Num Lock (LED)</option>
+                <option value="scroll">Scroll Lock (LED)</option>
+              </select>
+            </label>
+            <p id="shortcut-error-msg" class="error hidden" style="color: #ff6b6b; font-size: 12px; margin-top: 4px;"></p>
             <p class="muted">
               <strong>Controller:</strong> Pause / Start input using the toolbar button only<br />
-              <strong>Host:</strong> Block remote: <kbd>Ctrl</kbd> 4 times (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd>) &nbsp;|&nbsp; Allow remote: <kbd>Alt</kbd> 4 times (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd>)
+              <strong>Host Shortcuts:</strong> Press selected key 4 times consecutively to Pause or Resume remote input. Distinct keys required for Pause &amp; Resume. Works even when Deskly is minimized.
             </p>
             <p class="ok" id="save-msg"></p>
             <hr />

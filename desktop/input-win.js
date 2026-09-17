@@ -47,7 +47,9 @@ const MapVirtualKeyW = user32.func("uint32 __stdcall MapVirtualKeyW(uint32 uCode
 
 const WH_KEYBOARD_LL = 13;
 const WM_KEYDOWN = 0x0100;
+const WM_KEYUP = 0x0101;
 const WM_SYSKEYDOWN = 0x0104;
+const WM_SYSKEYUP = 0x0105;
 
 let cachedBounds = null;
 let lastBoundsCheckAt = 0;
@@ -280,19 +282,56 @@ function setCursorPixels(x, y) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  WINDOWS LOW-LEVEL KEYBOARD HOOK (Isolates Host keystrokes for 4x Ctrl / 4x Alt)
+//  WINDOWS LOW-LEVEL KEYBOARD HOOK (Isolates Host keystrokes for 4x Pause / 4x Resume)
 // ══════════════════════════════════════════════════════════════════════════════
+
+const SHORTCUT_KEY_DEFS = {
+  ctrl: { id: "ctrl", name: "Control (Ctrl)", vks: [0x11, 0xA2, 0xA3], isLed: false },
+  alt: { id: "alt", name: "Alt", vks: [0x12, 0xA4, 0xA5], isLed: false },
+  shift: { id: "shift", name: "Shift", vks: [0x10, 0xA0, 0xA1], isLed: false },
+  caps: { id: "caps", name: "Caps Lock (LED)", vks: [0x14], isLed: true },
+  num: { id: "num", name: "Num Lock (LED)", vks: [0x90], isLed: true },
+  scroll: { id: "scroll", name: "Scroll Lock (LED)", vks: [0x91], isLed: true },
+  space: { id: "space", name: "Spacebar", vks: [0x20], isLed: false },
+  escape: { id: "escape", name: "Escape (Esc)", vks: [0x1b], isLed: false },
+};
 
 let hKeyboardHook = null;
 let hookCallbackPtr = null;
 let onSequenceAction = null;
 
-let hostCtrlTapCount = 0;
-let hostAltTapCount = 0;
+let configuredPauseKeyId = "ctrl";
+let configuredResumeKeyId = "alt";
+
+let pauseTapCount = 0;
+let resumeTapCount = 0;
 let lastHostKeyTime = 0;
 
+function setShortcutKeys(pauseKeyId, resumeKeyId) {
+  if (
+    pauseKeyId &&
+    SHORTCUT_KEY_DEFS[pauseKeyId] &&
+    resumeKeyId &&
+    SHORTCUT_KEY_DEFS[resumeKeyId] &&
+    pauseKeyId !== resumeKeyId
+  ) {
+    configuredPauseKeyId = pauseKeyId;
+    configuredResumeKeyId = resumeKeyId;
+    pauseTapCount = 0;
+    resumeTapCount = 0;
+    return true;
+  }
+  return false;
+}
+
+function isVkMatch(vk, keyId) {
+  const def = SHORTCUT_KEY_DEFS[keyId];
+  if (!def || !def.vks) return false;
+  return def.vks.includes(vk);
+}
+
 function keyboardHookProc(nCode, wParam, lParam) {
-  if (nCode >= 0 && (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN)) {
+  if (nCode >= 0 && (wParam === WM_KEYUP || wParam === WM_SYSKEYUP)) {
     const flags = lParam.flags;
     const extraInfo = lParam.dwExtraInfo;
     const isDesklyInjected =
@@ -306,30 +345,28 @@ function keyboardHookProc(nCode, wParam, lParam) {
       const vk = lParam.vkCode;
       const now = Date.now();
       if (now - lastHostKeyTime > 1500) {
-        hostCtrlTapCount = 0;
-        hostAltTapCount = 0;
+        pauseTapCount = 0;
+        resumeTapCount = 0;
       }
       lastHostKeyTime = now;
 
-      // VK_CONTROL (0x11), VK_LCONTROL (0xA2), VK_RCONTROL (0xA3)
-      if (vk === 0x11 || vk === 0xA2 || vk === 0xA3) {
-        hostAltTapCount = 0;
-        hostCtrlTapCount++;
-        if (hostCtrlTapCount >= 4) {
-          hostCtrlTapCount = 0;
+      if (isVkMatch(vk, configuredPauseKeyId)) {
+        resumeTapCount = 0;
+        pauseTapCount++;
+        if (pauseTapCount >= 4) {
+          pauseTapCount = 0;
           if (onSequenceAction) onSequenceAction("pause");
         }
-      // VK_MENU / Alt (0x12), VK_LMENU (0xA4), VK_RMENU (0xA5)
-      } else if (vk === 0x12 || vk === 0xA4 || vk === 0xA5) {
-        hostCtrlTapCount = 0;
-        hostAltTapCount++;
-        if (hostAltTapCount >= 4) {
-          hostAltTapCount = 0;
+      } else if (isVkMatch(vk, configuredResumeKeyId)) {
+        pauseTapCount = 0;
+        resumeTapCount++;
+        if (resumeTapCount >= 4) {
+          resumeTapCount = 0;
           if (onSequenceAction) onSequenceAction("resume");
         }
       } else {
-        hostCtrlTapCount = 0;
-        hostAltTapCount = 0;
+        pauseTapCount = 0;
+        resumeTapCount = 0;
       }
     }
   }
@@ -450,17 +487,34 @@ function blinkLed(ledId, durationMs = 3000) {
   return true;
 }
 
+function getAvailableShortcutKeys() {
+  const availableLeds = getAvailableLeds().map((l) => l.id);
+  const keys = [];
+  for (const [id, def] of Object.entries(SHORTCUT_KEY_DEFS)) {
+    if (def.isLed) {
+      if (availableLeds.includes(id)) {
+        keys.push({ id: def.id, name: def.name, isLed: true });
+      }
+    } else {
+      keys.push({ id: def.id, name: def.name, isLed: false });
+    }
+  }
+  return keys;
+}
+
 module.exports = {
   applyEvent,
   blinkLed,
   cursorNormalized,
   getAvailableLeds,
+  getAvailableShortcutKeys,
   getCursor,
   moveCursorBy,
   releaseAllKeys,
   screenBounds,
   setCursorNormalized,
   setCursorPixels,
+  setShortcutKeys,
   startKeyboardHook,
   stopKeyboardHook,
   toPixels,
