@@ -32,6 +32,16 @@ const settingsSchema = new mongoose.Schema(
     videoQuality: { type: String, enum: ["smooth", "balanced", "sharp"], default: "balanced" },
     screenSize: { type: String, enum: ["adaptive", "720p", "1080p"], default: "adaptive" },
     hostRunInBackground: { type: Boolean, default: false },
+    pauseLed: {
+      type: String,
+      enum: ["none", "caps", "touchpad", "mute", "micmute", "fnlock", "num", "scroll"],
+      default: "none",
+    },
+    resumeLed: {
+      type: String,
+      enum: ["none", "caps", "touchpad", "mute", "micmute", "fnlock", "num", "scroll"],
+      default: "none",
+    },
     recentDevices: {
       type: [{ publicId: String, username: String, accessPassword: String, lastConnectedAt: Date }],
       default: [],

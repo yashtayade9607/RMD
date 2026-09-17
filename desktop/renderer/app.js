@@ -344,7 +344,9 @@ async function bootstrap() {
   try {
     const me = await api("/api/me");
     state.me = me;
-    state.settings = me.settings || state.settings;
+    // Preserve local LED selections only for older database records that do
+    // not yet have these newly persisted settings. Database values win once set.
+    state.settings = { ...state.settings, ...(me.settings || {}) };
     state.savedAccess = await window.deskly.accessList();
     await initLedDropdowns();
     paintHome();
@@ -371,7 +373,7 @@ function saveLogin(data) {
   state.token = data.token;
   localStorage.setItem("desklyToken", data.token);
   state.me = data;
-  state.settings = data.settings || state.settings;
+  state.settings = { ...state.settings, ...(data.settings || {}) };
   state.hostAccessPassword = data.devices?.host?.accessPassword || data.devices?.controller?.accessPassword || "";
   log("info", "Auth", `Logged in as user ${data.user?.username || "unknown"}`);
 }
@@ -772,14 +774,8 @@ async function onSignal(msg) {
   }
 
   if (msg.type === "signal") {
-    if (msg.data?.kind === "input-feedback" && !state.isHosting) {
-      const wasBlocked = state.remoteInputPaused;
-      state.remoteInputPaused = !!msg.data.paused;
-      updateInputPill();
-      if (wasBlocked !== state.remoteInputPaused) {
-        setSessionFeedback(msg.data.paused ? "⛔ Host blocked your input" : "✅ Host allowed your input");
-        triggerLedBlink(msg.data.paused ? "pause" : "resume");
-      }
+    if (msg.data?.kind === "input-feedback") {
+      applySharedInputPause(msg.data.paused, msg.data.source || "remote");
     } else {
       await handleRtc(msg.data);
     }
@@ -1122,6 +1118,13 @@ function dcSendCursor(obj) {
 }
 
 async function onControlMessage(msg) {
+  // Pause state is shared: either side can pause or resume the session.
+  // Handle it before the host's blocked-input guard so a resume always works.
+  if (msg.t === "input-feedback") {
+    applySharedInputPause(msg.paused, msg.source || "remote");
+    return;
+  }
+
   if (state.isHosting) {
     if (state.remoteInputPaused) {
       // Host paused/blocked remote controller: strictly discard all input and cursor movements
@@ -1183,15 +1186,6 @@ async function onControlMessage(msg) {
             );
           }
         }
-      }
-    }
-    if (msg.t === "input-feedback") {
-      const wasBlocked = state.remoteInputPaused;
-      state.remoteInputPaused = !!msg.paused;
-      updateInputPill();
-      if (wasBlocked !== state.remoteInputPaused) {
-        setSessionFeedback(msg.paused ? "⛔ Host blocked your input" : "✅ Host allowed your input");
-        triggerLedBlink(msg.paused ? "pause" : "resume");
       }
     }
     if (msg.t === "settings") {
@@ -1362,15 +1356,15 @@ function updateInputPill() {
   } else {
     if (state.remoteInputPaused) {
       if (el) {
-        el.textContent = "Host BLOCKED";
-        el.className = "pill off disabled";
-        el.title = "Input is blocked by the host machine";
+        el.textContent = "Input PAUSED";
+        el.className = "pill off";
+        el.title = "Remote input is paused. Click to resume.";
       }
       if (btn) {
-        btn.disabled = true;
-        btn.textContent = "Host Blocked";
-        btn.className = "input-ctrl-btn btn-pause disabled";
-        btn.title = "Input is blocked by the host machine";
+        btn.disabled = false;
+        btn.textContent = "Start Input";
+        btn.className = "input-ctrl-btn btn-resume";
+        btn.title = "Resume remote input";
       }
     } else {
       if (el) {
@@ -1398,26 +1392,56 @@ function updateInputPill() {
 //  INPUT CONTROL & SHORTCUTS (Host & Controller)
 // ══════════════════════════════════════════════════════════════════════════════
 
+function sendSharedInputPause(paused, source) {
+  const message = { t: "input-feedback", paused: !!paused, source };
+  dcSend(message);
+  dcSendCursor(message);
+  sendWs({ type: "signal", data: { kind: "input-feedback", paused: !!paused, source } });
+}
+
+function applySharedInputPause(paused, source = "remote") {
+  const nextPaused = !!paused;
+  const changed = state.remoteInputPaused !== nextPaused || (!state.isHosting && state.inputArmed === nextPaused);
+  state.remoteInputPaused = nextPaused;
+
+  // On the controller, the shared state also controls whether input events
+  // leave this device. On the host it controls whether incoming events apply.
+  if (!state.isHosting) state.inputArmed = !nextPaused;
+  if (nextPaused && state.isHosting && window.deskly?.releaseAllKeys) {
+    window.deskly.releaseAllKeys();
+  }
+
+  updateInputPill();
+  if (changed) {
+    const actor = source === "host" ? "Host" : source === "controller" ? "Controller" : "remote device";
+    log("info", "Input", `Shared input ${nextPaused ? "paused" : "resumed"} by ${actor}`);
+    setSessionFeedback(nextPaused ? `⛔ Remote input PAUSED by ${actor}` : `✅ Remote input RESUMED by ${actor}`);
+    triggerLedBlink(nextPaused ? "pause" : "resume");
+  }
+}
+
 function hostPauseRemoteInput() {
-  if (state.remoteInputPaused) return;
+  if (state.remoteInputPaused) {
+    log("info", "Shortcut", "Pause ignored: remote input is already blocked");
+    return;
+  }
   state.remoteInputPaused = true;
   log("info", "Host", "Host blocked remote input");
   if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
-  dcSend({ t: "input-feedback", paused: true });
-  dcSendCursor({ t: "input-feedback", paused: true });
-  sendWs({ type: "signal", data: { kind: "input-feedback", paused: true } });
+  sendSharedInputPause(true, "host");
   updateInputPill();
   setSessionFeedback("⛔ Remote input BLOCKED (Ctrl+Alt+E to allow)");
   triggerLedBlink("pause");
 }
 
 function hostResumeRemoteInput() {
-  if (!state.remoteInputPaused) return;
+  if (!state.remoteInputPaused) {
+    log("info", "Shortcut", "Resume ignored: remote input is already allowed");
+    return;
+  }
   state.remoteInputPaused = false;
   log("info", "Host", "Host resumed remote input");
-  dcSend({ t: "input-feedback", paused: false });
-  dcSendCursor({ t: "input-feedback", paused: false });
-  sendWs({ type: "signal", data: { kind: "input-feedback", paused: false } });
+  sendSharedInputPause(false, "host");
   updateInputPill();
   setSessionFeedback("✅ Remote input ALLOWED (Ctrl+Alt+Q to block)");
   triggerLedBlink("resume");
@@ -1425,26 +1449,24 @@ function hostResumeRemoteInput() {
 
 function controllerPauseInput() {
   state.inputArmed = false;
+  state.remoteInputPaused = true;
   log("info", "Controller", "Controller paused sending input");
   // Release any active modifier keys so host does not keep them stuck down
   dcSend({ t: "in", e: { kind: "key", code: "ControlLeft", down: false } });
   dcSend({ t: "in", e: { kind: "key", code: "ControlRight", down: false } });
   dcSend({ t: "in", e: { kind: "key", code: "AltLeft", down: false } });
   dcSend({ t: "in", e: { kind: "key", code: "AltRight", down: false } });
+  sendSharedInputPause(true, "controller");
   updateInputPill();
   setSessionFeedback("Input PAUSED");
   triggerLedBlink("pause");
 }
 
 function controllerResumeInput() {
-  if (state.remoteInputPaused) {
-    log("warn", "Controller", "Cannot resume input — Host has blocked input");
-    updateInputPill();
-    setSessionFeedback("⛔ Blocked by Host — cannot resume");
-    return;
-  }
   state.inputArmed = true;
+  state.remoteInputPaused = false;
   log("info", "Controller", "Controller resumed sending input");
+  sendSharedInputPause(false, "controller");
   updateInputPill();
   setSessionFeedback("Input ON");
   triggerLedBlink("resume");
@@ -1458,10 +1480,6 @@ if (btnToggleInput) {
       if (state.remoteInputPaused) hostResumeRemoteInput();
       else hostPauseRemoteInput();
     } else {
-      if (state.remoteInputPaused) {
-        setSessionFeedback("⛔ Input blocked by Host");
-        return;
-      }
       if (state.inputArmed) controllerPauseInput();
       else controllerResumeInput();
     }
@@ -1475,10 +1493,6 @@ if (inputStatePill) {
       if (state.remoteInputPaused) hostResumeRemoteInput();
       else hostPauseRemoteInput();
     } else {
-      if (state.remoteInputPaused) {
-        setSessionFeedback("⛔ Input blocked by Host");
-        return;
-      }
       if (state.inputArmed) controllerPauseInput();
       else controllerResumeInput();
     }
@@ -1488,7 +1502,15 @@ if (inputStatePill) {
 window.deskly.onHotkey((name) => {
   // Global shortcuts fire on every machine. Only the host responds; the
   // controller uses the toolbar button.
-  if (!state.isHosting) return;
+  log("info", "Shortcut", `Received ${name} shortcut`, {
+    role: state.role,
+    isHosting: state.isHosting,
+    inSession: state.wsInSession,
+  });
+  if (!state.isHosting) {
+    log("warn", "Shortcut", `${name} ignored: this Deskly instance is not the active host`);
+    return;
+  }
   if (name === "pause") hostPauseRemoteInput();
   if (name === "resume") hostResumeRemoteInput();
 });
@@ -1612,6 +1634,7 @@ window.addEventListener("keydown", (ev) => {
   // Host-only hotkeys Ctrl+Alt+Q (block remote) / Ctrl+Alt+E (allow remote)
   if (state.isHosting && ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
     ev.preventDefault();
+    log("info", "Shortcut", `Window shortcut activated: Ctrl+Alt+${ev.code === "KeyQ" ? "Q" : "E"}`);
     if (ev.code === "KeyQ") hostPauseRemoteInput();
     else hostResumeRemoteInput();
     return;

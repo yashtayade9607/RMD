@@ -125,6 +125,8 @@ export async function registerRoutes(app) {
         videoQuality: "balanced",
         screenSize: "adaptive",
         hostRunInBackground: false,
+        pauseLed: "none",
+        resumeLed: "none",
         recentDevices: [],
       });
 
@@ -221,6 +223,13 @@ export async function registerRoutes(app) {
       }
       if (typeof patch.hostRunInBackground === "boolean") {
         allowed.hostRunInBackground = patch.hostRunInBackground;
+      }
+      const validLedIds = ["none", "caps", "touchpad", "mute", "micmute", "fnlock", "num", "scroll"];
+      if (validLedIds.includes(patch.pauseLed)) {
+        allowed.pauseLed = patch.pauseLed;
+      }
+      if (validLedIds.includes(patch.resumeLed)) {
+        allowed.resumeLed = patch.resumeLed;
       }
       if (Array.isArray(patch.recentDevices)) {
         allowed.recentDevices = patch.recentDevices

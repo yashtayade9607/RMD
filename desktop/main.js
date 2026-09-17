@@ -178,15 +178,29 @@ function createWindow() {
 }
 
 function bindShortcuts() {
-  if (startRole !== "controller") {
-    globalShortcut.register("CommandOrControl+Alt+Q", () => {
-      mainWindow?.webContents.send("deskly:hotkey", "pause");
-    });
-    globalShortcut.register("CommandOrControl+Alt+E", () => {
-      mainWindow?.webContents.send("deskly:hotkey", "resume");
+  const registerShortcut = (accelerator, action) => {
+    const registered = globalShortcut.register(accelerator, () => {
+      writeLog("info", "Shortcut", `${accelerator} activated`, { action });
+      if (mainWindow?.webContents) {
+        mainWindow.webContents.send("deskly:hotkey", action);
+      } else {
+        writeLog("warn", "Shortcut", `${accelerator} activated but no renderer is available`);
+      }
     });
 
-  }
+    writeLog(
+      registered ? "info" : "warn",
+      "Shortcut",
+      registered
+        ? `Registered global shortcut: ${accelerator}`
+        : `Could not register global shortcut: ${accelerator}. It may be in use by another app.`,
+    );
+  };
+
+  // Register in every Deskly instance. The renderer accepts these events only
+  // while it is the active host, so switching roles after launch still works.
+  registerShortcut("CommandOrControl+Alt+Q", "pause");
+  registerShortcut("CommandOrControl+Alt+E", "resume");
 }
 
 app.whenReady().then(() => {
