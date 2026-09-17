@@ -330,6 +330,7 @@ const SHORTCUT_KEY_DEFS = {
 
 let hKeyboardHook = null;
 let hookCallbackPtr = null;
+let pollTimer = null;
 let onSequenceAction = null;
 
 let configuredPauseKeyId = "ctrl";
@@ -338,6 +339,7 @@ let configuredResumeKeyId = "alt";
 let pauseTapCount = 0;
 let resumeTapCount = 0;
 let lastHostKeyTime = 0;
+let pollKeyStateMap = {};
 
 function setShortcutKeys(pauseKeyId, resumeKeyId) {
   if (
@@ -351,6 +353,7 @@ function setShortcutKeys(pauseKeyId, resumeKeyId) {
     configuredResumeKeyId = resumeKeyId;
     pauseTapCount = 0;
     resumeTapCount = 0;
+    pollKeyStateMap = {};
     return true;
   }
   return false;
@@ -374,46 +377,16 @@ function keyboardHookProc(nCode, wParam, lParam) {
       ((flags & 0x02) !== 0) || // LLKHF_LOWER_IL_INJECTED
       (Number(extraInfo) === DESKLY_INJECTED_EXTRA_INFO);
 
-    // ONLY process physical Host keystrokes — ignore controller injected input!
-    if (!isDesklyInjected) {
+    if (!isDesklyInjected && !wasRecentInject(350)) {
       const rawVk = lParam.vkCode;
       const vk = normalizeVk(rawVk);
       const isKeyDown = (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN);
       const isKeyUp = (wParam === WM_KEYUP || wParam === WM_SYSKEYUP);
 
       if (isKeyDown) {
-        // Ignore OS auto-repeat events while a key is held down
         if (!hostPressedKeys.has(vk)) {
           hostPressedKeys.add(vk);
-
-          const now = Date.now();
-          if (now - lastHostKeyTime > 2500) {
-            pauseTapCount = 0;
-            resumeTapCount = 0;
-          }
-          lastHostKeyTime = now;
-
-          if (isVkMatch(vk, configuredPauseKeyId)) {
-            resumeTapCount = 0;
-            pauseTapCount++;
-            if (pauseTapCount >= 4) {
-              pauseTapCount = 0;
-              if (onSequenceAction) onSequenceAction("pause");
-            }
-          } else if (isVkMatch(vk, configuredResumeKeyId)) {
-            pauseTapCount = 0;
-            resumeTapCount++;
-            if (resumeTapCount >= 4) {
-              resumeTapCount = 0;
-              if (onSequenceAction) onSequenceAction("resume");
-            }
-          } else {
-            // Do NOT reset tap count for modifier keys (Shift, Ctrl, Alt, CapsLock) pressed together
-            if (![0x10, 0x11, 0x12, 0x14, 0x5b, 0x5c].includes(vk)) {
-              pauseTapCount = 0;
-              resumeTapCount = 0;
-            }
-          }
+          registerHostTap(vk);
         }
       } else if (isKeyUp) {
         hostPressedKeys.delete(vk);
@@ -423,18 +396,91 @@ function keyboardHookProc(nCode, wParam, lParam) {
   return CallNextHookEx(hKeyboardHook, nCode, wParam, lParam);
 }
 
+function registerHostTap(vk) {
+  const now = Date.now();
+  if (now - lastHostKeyTime > 2500) {
+    pauseTapCount = 0;
+    resumeTapCount = 0;
+  }
+  lastHostKeyTime = now;
+
+  if (isVkMatch(vk, configuredPauseKeyId)) {
+    resumeTapCount = 0;
+    pauseTapCount++;
+    if (pauseTapCount >= 4) {
+      pauseTapCount = 0;
+      if (onSequenceAction) onSequenceAction("pause");
+    }
+  } else if (isVkMatch(vk, configuredResumeKeyId)) {
+    pauseTapCount = 0;
+    resumeTapCount++;
+    if (resumeTapCount >= 4) {
+      resumeTapCount = 0;
+      if (onSequenceAction) onSequenceAction("resume");
+    }
+  } else {
+    if (![0x10, 0x11, 0x12, 0x14, 0x5b, 0x5c].includes(vk)) {
+      pauseTapCount = 0;
+      resumeTapCount = 0;
+    }
+  }
+}
+
+function pollShortcutKeys() {
+  if (wasRecentInject(350)) return;
+
+  const pauseDef = SHORTCUT_KEY_DEFS[configuredPauseKeyId];
+  const resumeDef = SHORTCUT_KEY_DEFS[configuredResumeKeyId];
+
+  if (pauseDef && pauseDef.vks) {
+    const isPauseDown = pauseDef.vks.some((vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0);
+    const wasPauseDown = !!pollKeyStateMap["pause"];
+    if (isPauseDown && !wasPauseDown) {
+      pollKeyStateMap["pause"] = true;
+      if (!hKeyboardHook) {
+        registerHostTap(pauseDef.vks[0]);
+      }
+    } else if (!isPauseDown && wasPauseDown) {
+      pollKeyStateMap["pause"] = false;
+    }
+  }
+
+  if (resumeDef && resumeDef.vks) {
+    const isResumeDown = resumeDef.vks.some((vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0);
+    const wasResumeDown = !!pollKeyStateMap["resume"];
+    if (isResumeDown && !wasResumeDown) {
+      pollKeyStateMap["resume"] = true;
+      if (!hKeyboardHook) {
+        registerHostTap(resumeDef.vks[0]);
+      }
+    } else if (!isResumeDown && wasResumeDown) {
+      pollKeyStateMap["resume"] = false;
+    }
+  }
+}
+
 function startKeyboardHook(actionCallback) {
-  if (hKeyboardHook) return;
   onSequenceAction = actionCallback;
-  try {
-    hookCallbackPtr = koffi.register(keyboardHookProc, koffi.pointer(HOOKPROC));
-    hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, hookCallbackPtr, null, 0);
-  } catch (err) {
-    console.error("[Hook] Failed to install WH_KEYBOARD_LL hook:", err.message);
+
+  if (!hKeyboardHook) {
+    try {
+      hookCallbackPtr = koffi.register(keyboardHookProc, koffi.pointer(HOOKPROC));
+      hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, hookCallbackPtr, null, 0);
+    } catch (err) {
+      console.error("[Hook] Failed to install WH_KEYBOARD_LL hook:", err.message);
+    }
+  }
+
+  if (!pollTimer) {
+    pollTimer = setInterval(pollShortcutKeys, 15);
   }
 }
 
 function stopKeyboardHook() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
   if (hKeyboardHook) {
     try {
       UnhookWindowsHookEx(hKeyboardHook);

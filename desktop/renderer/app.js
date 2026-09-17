@@ -1506,6 +1506,27 @@ function updateInputPill() {
 //  INPUT CONTROL & SHORTCUTS (Host & Controller)
 // ══════════════════════════════════════════════════════════════════════════════
 
+function getShortcutName(keyId) {
+  const map = {
+    ctrl: "Ctrl",
+    alt: "Alt",
+    shift: "Shift",
+    caps: "Caps Lock",
+    touchpad: "Trackpad LED",
+    mute: "Mute LED",
+    micmute: "Mic Mute LED",
+    fnlock: "Fn Lock LED",
+    num: "Num Lock",
+    scroll: "Scroll Lock",
+    space: "Spacebar",
+    escape: "Esc",
+    tab: "Tab",
+  };
+  if (map[keyId]) return map[keyId];
+  if (keyId && keyId.startsWith("f")) return keyId.toUpperCase();
+  return keyId || "Key";
+}
+
 function hostPauseRemoteInput() {
   if (state.remoteInputPaused) return;
   state.remoteInputPaused = true;
@@ -1515,7 +1536,8 @@ function hostPauseRemoteInput() {
   dcSendCursor({ t: "input-feedback", paused: true });
   sendWs({ type: "signal", data: { kind: "input-feedback", paused: true } });
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED (Alt x4 to allow)");
+  const resumeKeyName = getShortcutName(state.settings.resumeShortcutKey || "alt");
+  setSessionFeedback(`⛔ Remote input BLOCKED (${resumeKeyName} x4 to allow)`);
   triggerLedBlink("pause");
 }
 
@@ -1527,7 +1549,8 @@ function hostResumeRemoteInput() {
   dcSendCursor({ t: "input-feedback", paused: false });
   sendWs({ type: "signal", data: { kind: "input-feedback", paused: false } });
   updateInputPill();
-  setSessionFeedback("✅ Remote input ALLOWED (Ctrl x4 to block)");
+  const pauseKeyName = getShortcutName(state.settings.pauseShortcutKey || "ctrl");
+  setSessionFeedback(`✅ Remote input ALLOWED (${pauseKeyName} x4 to block)`);
   triggerLedBlink("resume");
 }
 
