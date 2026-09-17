@@ -26,8 +26,6 @@ const state = {
     hostRunInBackground: false,
     pauseLed: localStorage.getItem("desklyPauseLed") || "none",
     resumeLed: localStorage.getItem("desklyResumeLed") || "none",
-    pauseShortcutKey: localStorage.getItem("desklyPauseShortcutKey") || "ctrl",
-    resumeShortcutKey: localStorage.getItem("desklyResumeShortcutKey") || "alt",
     recentDevices: [],
   },
   ws: null,
@@ -109,108 +107,6 @@ async function initLedDropdowns() {
   } catch (err) {
     log("warn", "LED", `Failed to initialize LED list: ${err.message}`);
   }
-}
-
-async function initShortcutDropdowns() {
-  if (!window.deskly?.getAvailableShortcutKeys) return;
-  try {
-    const keys = await window.deskly.getAvailableShortcutKeys();
-    const pauseSelect = $("set-pause-shortcut");
-    const resumeSelect = $("set-resume-shortcut");
-    if (pauseSelect && resumeSelect && keys && keys.length) {
-      const optionsHtml = keys
-        .map((k) => `<option value="${k.id}">${k.name}</option>`)
-        .join("");
-
-      pauseSelect.innerHTML = optionsHtml;
-      resumeSelect.innerHTML = optionsHtml;
-
-      pauseSelect.value = state.settings.pauseShortcutKey || "ctrl";
-      resumeSelect.value = state.settings.resumeShortcutKey || "alt";
-
-      if (pauseSelect.value === resumeSelect.value) {
-        const altOpt = keys.find((k) => k.id !== pauseSelect.value);
-        if (altOpt) {
-          resumeSelect.value = altOpt.id;
-          state.settings.resumeShortcutKey = altOpt.id;
-          localStorage.setItem("desklyResumeShortcutKey", altOpt.id);
-        }
-      }
-
-      updateShortcutDropdownDisabling();
-      if (window.deskly?.setShortcutKeys) {
-        window.deskly.setShortcutKeys(pauseSelect.value, resumeSelect.value);
-      }
-
-      pauseSelect.onchange = () => handleShortcutKeyChange("pause");
-      resumeSelect.onchange = () => handleShortcutKeyChange("resume");
-    }
-  } catch (err) {
-    log("warn", "Shortcut", `Failed to initialize shortcut keys: ${err.message}`);
-  }
-}
-
-function updateShortcutDropdownDisabling() {
-  const pauseSelect = $("set-pause-shortcut");
-  const resumeSelect = $("set-resume-shortcut");
-  const errorMsg = $("shortcut-error-msg");
-  if (!pauseSelect || !resumeSelect) return;
-
-  const pVal = pauseSelect.value;
-  const rVal = resumeSelect.value;
-
-  for (const opt of resumeSelect.options) {
-    opt.disabled = opt.value === pVal;
-  }
-  for (const opt of pauseSelect.options) {
-    opt.disabled = opt.value === rVal;
-  }
-
-  if (pVal === rVal) {
-    if (errorMsg) {
-      errorMsg.textContent = "Pause and Resume keys cannot be the same key. Please choose distinct keys.";
-      errorMsg.classList.remove("hidden");
-    }
-  } else {
-    if (errorMsg) errorMsg.classList.add("hidden");
-  }
-}
-
-function handleShortcutKeyChange(changedTarget) {
-  const pauseSelect = $("set-pause-shortcut");
-  const resumeSelect = $("set-resume-shortcut");
-  if (!pauseSelect || !resumeSelect) return;
-
-  let pVal = pauseSelect.value;
-  let rVal = resumeSelect.value;
-
-  if (pVal === rVal) {
-    const options = (changedTarget === "pause" ? resumeSelect : pauseSelect).options;
-    for (const opt of options) {
-      if (opt.value !== (changedTarget === "pause" ? pVal : rVal)) {
-        if (changedTarget === "pause") {
-          resumeSelect.value = opt.value;
-          rVal = opt.value;
-        } else {
-          pauseSelect.value = opt.value;
-          pVal = opt.value;
-        }
-        break;
-      }
-    }
-  }
-
-  state.settings.pauseShortcutKey = pVal;
-  state.settings.resumeShortcutKey = rVal;
-  localStorage.setItem("desklyPauseShortcutKey", pVal);
-  localStorage.setItem("desklyResumeShortcutKey", rVal);
-
-  if (window.deskly?.setShortcutKeys) {
-    window.deskly.setShortcutKeys(pVal, rVal);
-  }
-
-  updateShortcutDropdownDisabling();
-  log("info", "Shortcut", `Updated host shortcuts: Pause=${pVal}, Resume=${rVal}`);
 }
 
 function log(level, category, message, data) {
@@ -322,9 +218,6 @@ function paintHome() {
   $("set-background").checked = !!state.settings.hostRunInBackground;
   if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
   if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
-  if ($("set-pause-shortcut")) $("set-pause-shortcut").value = state.settings.pauseShortcutKey || "ctrl";
-  if ($("set-resume-shortcut")) $("set-resume-shortcut").value = state.settings.resumeShortcutKey || "alt";
-  updateShortcutDropdownDisabling();
   renderRecentDevices();
 }
 
@@ -454,7 +347,6 @@ async function bootstrap() {
     state.settings = me.settings || state.settings;
     state.savedAccess = await window.deskly.accessList();
     await initLedDropdowns();
-    await initShortcutDropdowns();
     paintHome();
     await openSocket();
     if (state.role === "host" && state.settings.hostRunInBackground) {
@@ -1460,11 +1352,11 @@ function updateInputPill() {
       if (state.remoteInputPaused) {
         btn.textContent = "Allow Remote";
         btn.className = "input-ctrl-btn btn-resume";
-        btn.title = "Allow remote controller input (or press Alt 4 times)";
+        btn.title = "Allow remote controller input (Ctrl+Alt+E)";
       } else {
         btn.textContent = "Block Remote";
         btn.className = "input-ctrl-btn btn-pause";
-        btn.title = "Block remote controller input (or press Ctrl 4 times)";
+        btn.title = "Block remote controller input (Ctrl+Alt+Q)";
       }
     }
   } else {
@@ -1506,27 +1398,6 @@ function updateInputPill() {
 //  INPUT CONTROL & SHORTCUTS (Host & Controller)
 // ══════════════════════════════════════════════════════════════════════════════
 
-function getShortcutName(keyId) {
-  const map = {
-    ctrl: "Ctrl",
-    alt: "Alt",
-    shift: "Shift",
-    caps: "Caps Lock",
-    touchpad: "Trackpad LED",
-    mute: "Mute LED",
-    micmute: "Mic Mute LED",
-    fnlock: "Fn Lock LED",
-    num: "Num Lock",
-    scroll: "Scroll Lock",
-    space: "Spacebar",
-    escape: "Esc",
-    tab: "Tab",
-  };
-  if (map[keyId]) return map[keyId];
-  if (keyId && keyId.startsWith("f")) return keyId.toUpperCase();
-  return keyId || "Key";
-}
-
 function hostPauseRemoteInput() {
   if (state.remoteInputPaused) return;
   state.remoteInputPaused = true;
@@ -1536,8 +1407,7 @@ function hostPauseRemoteInput() {
   dcSendCursor({ t: "input-feedback", paused: true });
   sendWs({ type: "signal", data: { kind: "input-feedback", paused: true } });
   updateInputPill();
-  const resumeKeyName = getShortcutName(state.settings.resumeShortcutKey || "alt");
-  setSessionFeedback(`⛔ Remote input BLOCKED (${resumeKeyName} x4 to allow)`);
+  setSessionFeedback("⛔ Remote input BLOCKED (Ctrl+Alt+E to allow)");
   triggerLedBlink("pause");
 }
 
@@ -1549,8 +1419,7 @@ function hostResumeRemoteInput() {
   dcSendCursor({ t: "input-feedback", paused: false });
   sendWs({ type: "signal", data: { kind: "input-feedback", paused: false } });
   updateInputPill();
-  const pauseKeyName = getShortcutName(state.settings.pauseShortcutKey || "ctrl");
-  setSessionFeedback(`✅ Remote input ALLOWED (${pauseKeyName} x4 to block)`);
+  setSessionFeedback("✅ Remote input ALLOWED (Ctrl+Alt+Q to block)");
   triggerLedBlink("resume");
 }
 
@@ -1617,9 +1486,8 @@ if (inputStatePill) {
 }
 
 window.deskly.onHotkey((name) => {
-  // The WH_KEYBOARD_LL hook and global shortcuts fire on every machine.
-  // Only act here when this instance is the HOST — the controller uses
-  // the toolbar GUI button and the Ctrl+Alt+Q/E keydown check instead.
+  // Global shortcuts fire on every machine. Only the host responds; the
+  // controller uses the toolbar button.
   if (!state.isHosting) return;
   if (name === "pause") hostPauseRemoteInput();
   if (name === "resume") hostResumeRemoteInput();

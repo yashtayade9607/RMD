@@ -28,6 +28,4 @@ contextBridge.exposeInMainWorld("deskly", {
   clearLogs: () => ipcRenderer.invoke("deskly:clear-logs"),
   getAvailableLeds: () => ipcRenderer.invoke("deskly:get-leds"),
   blinkLed: (ledId, durationMs) => ipcRenderer.invoke("deskly:blink-led", ledId, durationMs),
-  getAvailableShortcutKeys: () => ipcRenderer.invoke("deskly:get-shortcut-keys"),
-  setShortcutKeys: (pauseKey, resumeKey) => ipcRenderer.invoke("deskly:set-shortcut-keys", pauseKey, resumeKey),
 });

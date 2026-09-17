@@ -186,14 +186,6 @@ function bindShortcuts() {
       mainWindow?.webContents.send("deskly:hotkey", "resume");
     });
 
-    // Windows low-level keyboard hook for physical 4x Ctrl (pause) / 4x Alt (resume) detection
-    try {
-      input.startKeyboardHook((action) => {
-        mainWindow?.webContents.send("deskly:hotkey", action);
-      });
-    } catch (err) {
-      writeLog("warn", "Main", `Keyboard hook setup error: ${err.message}`);
-    }
   }
 }
 
@@ -208,25 +200,8 @@ app.on("activate", showWindow);
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
-  try { input.stopKeyboardHook(); } catch {}
   if (cursorTimer) clearInterval(cursorTimer);
   writeLog("info", "Main", "Deskly closing");
-});
-
-ipcMain.handle("deskly:get-shortcut-keys", () => {
-  try {
-    return input.getAvailableShortcutKeys();
-  } catch {
-    return [];
-  }
-});
-
-ipcMain.handle("deskly:set-shortcut-keys", (_event, pauseKey, resumeKey) => {
-  try {
-    return input.setShortcutKeys(pauseKey, resumeKey);
-  } catch {
-    return false;
-  }
 });
 
 ipcMain.handle("deskly:get-leds", () => {

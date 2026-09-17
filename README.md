@@ -43,7 +43,7 @@ First launch: create your username and password. The host window shows an ID. On
 
 The controlled PC starts tray-only: no Command Prompt or Deskly window is shown once it is set up. Use `start-host.bat` (or `start-host-hidden.vbs`) to run it. Click the Deskly icon in the Windows notification area to open the settings/ID window when needed. Closing that window hides it instead of stopping the host; use **Exit Deskly** from the tray menu when you deliberately want to stop it.
 
-- **Host:** Block remote input by pressing **Ctrl 4 times** (or `Ctrl+Alt+Q`); Allow remote input by pressing **Alt 4 times** (or `Ctrl+Alt+E`).
+- **Host:** Block remote input with `Ctrl+Alt+Q`; allow remote input with `Ctrl+Alt+E`.
 - **Controller:** Click the **Pause / Start Input** button in the toolbar (keyboard shortcuts removed from controller side).
 - **LED Indicators:** In Settings, choose a keyboard indicator LED (Caps Lock, Num Lock, Scroll Lock) to blink for 3 seconds on pause and another for resume. Works on both host and controller independently.
 The Windows key from the controller is blocked.
