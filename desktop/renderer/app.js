@@ -1025,11 +1025,19 @@ function dcSendCursor(obj) {
 
 async function onControlMessage(msg) {
   if (state.isHosting) {
-    if (msg.t === "in" && !state.remoteInputPaused) {
+    if (state.remoteInputPaused) {
+      // Host paused/blocked remote controller: strictly discard all input and cursor movements
+      if (msg.t === "settings") {
+        state.settings = { ...state.settings, ...msg.settings };
+        syncSessionUi();
+      }
+      return;
+    }
+    if (msg.t === "in") {
       state.lastRemoteInputAt = Date.now();
       window.deskly.inject(msg.e, { blockWinKey: state.settings.blockWinKey !== false });
     }
-    if (msg.t === "cursor" && state.settings.mouseFollow && !state.remoteInputPaused) {
+    if (msg.t === "cursor" && state.settings.mouseFollow) {
       if (Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
         state.lastRemoteInputAt = Date.now();
         window.deskly.followCursor({ x: msg.x, y: msg.y });
@@ -1057,7 +1065,7 @@ async function onControlMessage(msg) {
   if (!state.isHosting) {
     if (msg.t === "host-cursor" && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
       state.hostCursor = { x: msg.x, y: msg.y };
-      if (state.settings.mouseFollow && !state.remoteInputPaused) {
+      if (state.settings.mouseFollow && !state.remoteInputPaused && state.inputArmed) {
         state.suppressSendMouseMoveUntil = Date.now() + 35;
         const g = getGeometry();
         const clientX = g.videoLeft + msg.x * g.videoWidth;
@@ -1447,19 +1455,14 @@ video.addEventListener("resize", updateCursorPositions);
 let lastSentMouseAt = 0;
 
 video.addEventListener("mousemove", (ev) => {
-  if (state.isHosting) return;
+  if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
   if (Date.now() < state.suppressSendMouseMoveUntil) return;
 
   const p = videoNorm(ev);
-
-  if (state.inputArmed && !state.remoteInputPaused) {
-    const now = performance.now();
-    if (now - lastSentMouseAt >= 7) {
-      lastSentMouseAt = now;
-      dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
-    }
-  } else if (state.settings.mouseFollow) {
-    dcSendCursor({ t: "cursor", x: p.x, y: p.y });
+  const now = performance.now();
+  if (now - lastSentMouseAt >= 7) {
+    lastSentMouseAt = now;
+    dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
   }
 });
 
