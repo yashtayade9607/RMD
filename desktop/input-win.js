@@ -278,14 +278,15 @@ function setCursorPixels(x, y) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  WINDOWS LOW-LEVEL KEYBOARD HOOK (Isolates Host keystrokes for :qw and :qe)
+//  WINDOWS LOW-LEVEL KEYBOARD HOOK (Isolates Host keystrokes for 4x Ctrl / 4x Alt)
 // ══════════════════════════════════════════════════════════════════════════════
 
 let hKeyboardHook = null;
 let hookCallbackPtr = null;
 let onSequenceAction = null;
 
-let hostKeyBuffer = "";
+let hostCtrlTapCount = 0;
+let hostAltTapCount = 0;
 let lastHostKeyTime = 0;
 
 function keyboardHookProc(nCode, wParam, lParam) {
@@ -298,25 +299,31 @@ function keyboardHookProc(nCode, wParam, lParam) {
     if (!isInjected) {
       const vk = lParam.vkCode;
       const now = Date.now();
-      if (now - lastHostKeyTime > 2000) {
-        hostKeyBuffer = "";
+      if (now - lastHostKeyTime > 1500) {
+        hostCtrlTapCount = 0;
+        hostAltTapCount = 0;
       }
       lastHostKeyTime = now;
 
-      const isShiftDown = (GetAsyncKeyState(0x10) & 0x8000) !== 0;
-      if (vk === 0xBA && isShiftDown) {
-        // Shift + ';' -> ':'
-        hostKeyBuffer = ":";
-      } else if (hostKeyBuffer === ":" && vk === 0x51 /* Q */) {
-        hostKeyBuffer = ":q";
-      } else if (hostKeyBuffer === ":q" && vk === 0x57 /* W */) {
-        hostKeyBuffer = "";
-        if (onSequenceAction) onSequenceAction("pause");
-      } else if (hostKeyBuffer === ":q" && vk === 0x45 /* E */) {
-        hostKeyBuffer = "";
-        if (onSequenceAction) onSequenceAction("resume");
-      } else if (vk !== 0x10 /* Shift */ && vk !== 0xA0 /* LShift */ && vk !== 0xA1 /* RShift */) {
-        hostKeyBuffer = "";
+      // VK_CONTROL (0x11), VK_LCONTROL (0xA2), VK_RCONTROL (0xA3)
+      if (vk === 0x11 || vk === 0xA2 || vk === 0xA3) {
+        hostAltTapCount = 0;
+        hostCtrlTapCount++;
+        if (hostCtrlTapCount >= 4) {
+          hostCtrlTapCount = 0;
+          if (onSequenceAction) onSequenceAction("pause");
+        }
+      // VK_MENU / Alt (0x12), VK_LMENU (0xA4), VK_RMENU (0xA5)
+      } else if (vk === 0x12 || vk === 0xA4 || vk === 0xA5) {
+        hostCtrlTapCount = 0;
+        hostAltTapCount++;
+        if (hostAltTapCount >= 4) {
+          hostAltTapCount = 0;
+          if (onSequenceAction) onSequenceAction("resume");
+        }
+      } else {
+        hostCtrlTapCount = 0;
+        hostAltTapCount = 0;
       }
     }
   }

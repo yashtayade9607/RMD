@@ -43,8 +43,8 @@ First launch: create your username and password. The host window shows an ID. On
 
 The controlled PC starts tray-only: no Command Prompt or Deskly window is shown once it is set up. Use `start-host.bat` (or `start-host-hidden.vbs`) to run it. Click the Deskly icon in the Windows notification area to open the settings/ID window when needed. Closing that window hides it instead of stopping the host; use **Exit Deskly** from the tray menu when you deliberately want to stop it.
 
-Pause sending mouse/keyboard: Ctrl+Alt+Q or type :qw
-Resume: Ctrl+Alt+E or type :qe
+- Host: Press Ctrl 4 times to block remote input, press Alt 4 times to allow remote input.
+- Controller: Click the Pause Input / Start Input button in the toolbar to pause or resume sending mouse and keyboard input.
 The Windows key from the controller is blocked.
 
 ## Session controls

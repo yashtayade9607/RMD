@@ -23,7 +23,8 @@
         <!-- Session-only controls (revealed by enterSession, hidden by endSession) -->
         <div id="session-controls" class="header-session hidden">
           <span id="session-label" class="session-label-text"></span>
-          <span id="input-state" class="pill on">Input ON</span>
+          <span id="input-state" class="pill on" title="Current input state. Click to toggle.">Input ON</span>
+          <button id="btn-toggle-input" class="input-ctrl-btn btn-pause" title="Pause input (or press Ctrl 4 times)">Pause Input</button>
           <label class="session-check"><input type="checkbox" id="session-follow-toggle" /> Follow cursors</label>
 
           <div class="screen-fit-group">
@@ -162,9 +163,8 @@
               </select>
             </label>
             <p class="muted">
-              <strong>Controller:</strong> Pause input: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> or type <kbd>:qw</kbd><br />
-              Resume input: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> or type <kbd>:qe</kbd><br />
-              <strong>Host:</strong> Block remote: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> or type <kbd>:qw</kbd> &nbsp;|&nbsp; Allow: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> or type <kbd>:qe</kbd>
+              <strong>Controller:</strong> Pause / Start sending input using the <strong>Pause Input</strong> toolbar button.<br />
+              <strong>Host:</strong> Block remote input: press <kbd>Ctrl</kbd> 4 times &nbsp;|&nbsp; Allow remote input: press <kbd>Alt</kbd> 4 times
             </p>
             <p class="ok" id="save-msg"></p>
             <hr />
@@ -197,7 +197,6 @@
       <section id="view-session" class="hidden session">
         <div id="stage">
           <video id="remote-video" autoplay playsinline></video>
-          <div id="local-cmd" class="hidden">:<span id="local-cmd-text"></span></div>
           <!-- Host cursor indicator — skyblue glowing dot directly over host pointer (controller only) -->
           <div id="cursor-host" class="cursor-host-dot hidden" title="Host cursor"></div>
         </div>

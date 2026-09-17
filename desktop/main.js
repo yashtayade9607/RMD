@@ -185,7 +185,7 @@ function bindShortcuts() {
     mainWindow?.webContents.send("deskly:hotkey", "resume");
   });
 
-  // Windows low-level keyboard hook for physical :qw / :qe detection
+  // Windows low-level keyboard hook for physical 4x Ctrl (pause) / 4x Alt (resume) detection
   try {
     input.startKeyboardHook((action) => {
       mainWindow?.webContents.send("deskly:hotkey", action);

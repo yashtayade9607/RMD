@@ -1057,7 +1057,7 @@ async function onControlMessage(msg) {
   if (!state.isHosting) {
     if (msg.t === "host-cursor" && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
       state.hostCursor = { x: msg.x, y: msg.y };
-      if (state.settings.mouseFollow && !state.remoteInputPaused) {
+      if (state.settings.mouseFollow && state.inputArmed && !state.remoteInputPaused) {
         state.suppressSendMouseMoveUntil = Date.now() + 35;
         const g = getGeometry();
         const clientX = g.videoLeft + msg.x * g.videoWidth;
@@ -1229,17 +1229,57 @@ function cleanupPeer() {
 
 function updateInputPill() {
   const el = $("input-state");
-  if (!el) return;
+  const btn = $("btn-toggle-input");
+
   if (state.isHosting) {
-    el.textContent = state.remoteInputPaused ? "Remote BLOCKED" : "Remote ON";
-    el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
+    if (el) {
+      el.textContent = state.remoteInputPaused ? "Remote BLOCKED" : "Remote ON";
+      el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
+      el.title = "Host remote input status. Click to toggle.";
+    }
+    if (btn) {
+      btn.disabled = false;
+      if (state.remoteInputPaused) {
+        btn.textContent = "Allow Remote";
+        btn.className = "input-ctrl-btn btn-resume";
+        btn.title = "Allow remote controller input (or press Alt 4 times)";
+      } else {
+        btn.textContent = "Block Remote";
+        btn.className = "input-ctrl-btn btn-pause";
+        btn.title = "Block remote controller input (or press Ctrl 4 times)";
+      }
+    }
   } else {
     if (state.remoteInputPaused) {
-      el.textContent = "Host BLOCKED";
-      el.className = "pill off";
+      if (el) {
+        el.textContent = "Host BLOCKED";
+        el.className = "pill off";
+        el.title = "Input is blocked by the host";
+      }
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Host Blocked";
+        btn.className = "input-ctrl-btn btn-pause";
+        btn.title = "Input is blocked by the host machine";
+      }
     } else {
-      el.textContent = state.inputArmed ? "Input ON" : "Input PAUSED";
-      el.className = "pill " + (state.inputArmed ? "on" : "off");
+      if (el) {
+        el.textContent = state.inputArmed ? "Input ON" : "Input PAUSED";
+        el.className = "pill " + (state.inputArmed ? "on" : "off");
+        el.title = "Controller input state. Click to toggle.";
+      }
+      if (btn) {
+        btn.disabled = false;
+        if (state.inputArmed) {
+          btn.textContent = "Pause Input";
+          btn.className = "input-ctrl-btn btn-pause";
+          btn.title = "Pause sending keyboard & mouse input (or press Ctrl 4 times)";
+        } else {
+          btn.textContent = "Start Input";
+          btn.className = "input-ctrl-btn btn-resume";
+          btn.title = "Start sending keyboard & mouse input (or press Alt 4 times)";
+        }
+      }
     }
   }
 }
@@ -1255,7 +1295,7 @@ function hostPauseRemoteInput() {
   if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
   dcSend({ t: "input-feedback", paused: true });
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED");
+  setSessionFeedback("⛔ Remote input BLOCKED (Alt 4x to allow)");
 }
 
 function hostResumeRemoteInput() {
@@ -1264,12 +1304,19 @@ function hostResumeRemoteInput() {
   log("info", "Host", "Host resumed remote input");
   dcSend({ t: "input-feedback", paused: false });
   updateInputPill();
-  setSessionFeedback("✅ Remote input ALLOWED");
+  setSessionFeedback("✅ Remote input ALLOWED (Ctrl 4x to block)");
 }
 
 function controllerPauseInput() {
   state.inputArmed = false;
   log("info", "Controller", "Controller paused sending input");
+  // Release any active modifier keys so host does not keep them stuck down
+  dcSend({ t: "in", e: { kind: "key", code: "ControlLeft", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "ControlRight", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "AltLeft", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "AltRight", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "ShiftLeft", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "ShiftRight", down: false } });
   updateInputPill();
   setSessionFeedback("Input PAUSED");
 }
@@ -1281,18 +1328,33 @@ function controllerResumeInput() {
   setSessionFeedback("Input ON");
 }
 
-function localCommand(token) {
-  if (token === "qw") {
-    if (state.isHosting) hostPauseRemoteInput();
-    else controllerPauseInput();
-    return true;
-  }
-  if (token === "qe") {
-    if (state.isHosting) hostResumeRemoteInput();
-    else controllerResumeInput();
-    return true;
-  }
-  return false;
+// Controller GUI buttons to start & pause input
+const btnToggleInput = $("btn-toggle-input");
+if (btnToggleInput) {
+  btnToggleInput.onclick = () => {
+    if (state.isHosting) {
+      if (state.remoteInputPaused) hostResumeRemoteInput();
+      else hostPauseRemoteInput();
+    } else {
+      if (state.remoteInputPaused) return;
+      if (state.inputArmed) controllerPauseInput();
+      else controllerResumeInput();
+    }
+  };
+}
+
+const inputStatePill = $("input-state");
+if (inputStatePill) {
+  inputStatePill.onclick = () => {
+    if (state.isHosting) {
+      if (state.remoteInputPaused) hostResumeRemoteInput();
+      else hostPauseRemoteInput();
+    } else {
+      if (state.remoteInputPaused) return;
+      if (state.inputArmed) controllerPauseInput();
+      else controllerResumeInput();
+    }
+  };
 }
 
 window.deskly.onHotkey((name) => {
@@ -1384,22 +1446,17 @@ window.addEventListener("resize", updateCursorPositions);
 video.addEventListener("loadedmetadata", updateCursorPositions);
 video.addEventListener("resize", updateCursorPositions);
 
-let lastSentMouseAt = 0;
-
 video.addEventListener("mousemove", (ev) => {
   if (state.isHosting) return;
+  if (!state.inputArmed || state.remoteInputPaused) return;
   if (Date.now() < state.suppressSendMouseMoveUntil) return;
 
   const p = videoNorm(ev);
 
-  if (state.inputArmed && !state.remoteInputPaused) {
-    const now = performance.now();
-    if (now - lastSentMouseAt >= 7) {
-      lastSentMouseAt = now;
-      dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
-    }
-  } else if (state.settings.mouseFollow) {
-    dcSendCursor({ t: "cursor", x: p.x, y: p.y });
+  const now = performance.now();
+  if (now - lastSentMouseAt >= 7) {
+    lastSentMouseAt = now;
+    dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
   }
 });
 
@@ -1425,8 +1482,9 @@ video.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 const WIN_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 
-let ctrlCmdBuffer = "";
-let ctrlCmdTimer = null;
+let ctrlTapCount = 0;
+let altTapCount = 0;
+let tapResetTimer = null;
 
 window.addEventListener("keydown", (ev) => {
   const target = ev.target;
@@ -1445,29 +1503,42 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
-  // Non-blocking rolling sequence detector for :qw and :qe
-  if (!isInputFocused) {
-    if (ctrlCmdTimer) clearTimeout(ctrlCmdTimer);
-    ctrlCmdTimer = setTimeout(() => { ctrlCmdBuffer = ""; }, 2000);
+  // Host-side 4x Ctrl (block) / 4x Alt (allow) tap detection
+  if (state.isHosting && !isInputFocused && !ev.repeat) {
+    if (tapResetTimer) clearTimeout(tapResetTimer);
+    tapResetTimer = setTimeout(() => {
+      ctrlTapCount = 0;
+      altTapCount = 0;
+    }, 1500);
 
-    if (ev.key === ":") {
-      ctrlCmdBuffer = ":";
-    } else if (ctrlCmdBuffer === ":" && (ev.key === "q" || ev.key === "Q")) {
-      ctrlCmdBuffer = ":q";
-    } else if (ctrlCmdBuffer === ":q" && (ev.key === "w" || ev.key === "W")) {
-      ctrlCmdBuffer = "";
-      ev.preventDefault();
-      ev.stopPropagation();
-      localCommand("qw");
-      return;
-    } else if (ctrlCmdBuffer === ":q" && (ev.key === "e" || ev.key === "E")) {
-      ctrlCmdBuffer = "";
-      ev.preventDefault();
-      ev.stopPropagation();
-      localCommand("qe");
-      return;
-    } else if (ev.key !== "Shift" && ev.key !== "Control" && ev.key !== "Alt") {
-      ctrlCmdBuffer = "";
+    const isCtrl = ev.key === "Control" || ev.code === "ControlLeft" || ev.code === "ControlRight";
+    const isAlt = ev.key === "Alt" || ev.code === "AltLeft" || ev.code === "AltRight";
+
+    if (isCtrl) {
+      altTapCount = 0;
+      ctrlTapCount++;
+      if (ctrlTapCount >= 4) {
+        ctrlTapCount = 0;
+        if (tapResetTimer) clearTimeout(tapResetTimer);
+        ev.preventDefault();
+        ev.stopPropagation();
+        hostPauseRemoteInput();
+        return;
+      }
+    } else if (isAlt) {
+      ctrlTapCount = 0;
+      altTapCount++;
+      if (altTapCount >= 4) {
+        altTapCount = 0;
+        if (tapResetTimer) clearTimeout(tapResetTimer);
+        ev.preventDefault();
+        ev.stopPropagation();
+        hostResumeRemoteInput();
+        return;
+      }
+    } else {
+      ctrlTapCount = 0;
+      altTapCount = 0;
     }
   }
 
