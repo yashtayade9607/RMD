@@ -377,7 +377,12 @@ function keyboardHookProc(nCode, wParam, lParam) {
       ((flags & 0x02) !== 0) || // LLKHF_LOWER_IL_INJECTED
       (Number(extraInfo) === DESKLY_INJECTED_EXTRA_INFO);
 
-    if (!isDesklyInjected && !wasRecentInject(350)) {
+    // A remote session may inject cursor updates continuously.  Do not use the
+    // time-based injection guard here: it would discard genuine host keys for
+    // as long as cursor movement continues (and could leave a key marked down).
+    // Low-level hook events contain explicit injected flags / extra info, which
+    // is sufficient to exclude Deskly's own synthetic key events.
+    if (!isDesklyInjected) {
       const rawVk = lParam.vkCode;
       const vk = normalizeVk(rawVk);
       const isKeyDown = (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN);
