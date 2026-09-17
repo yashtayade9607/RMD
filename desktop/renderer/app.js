@@ -90,6 +90,22 @@ async function initLedDropdowns() {
         localStorage.setItem("desklyResumeLed", resumeSelect.value);
       };
     }
+    if ($("btn-test-pause-led")) {
+      $("btn-test-pause-led").onclick = () => {
+        const led = state.settings.pauseLed || $("set-pause-led")?.value;
+        if (led && led !== "none" && window.deskly?.blinkLed) {
+          window.deskly.blinkLed(led, 3000).catch(() => {});
+        }
+      };
+    }
+    if ($("btn-test-resume-led")) {
+      $("btn-test-resume-led").onclick = () => {
+        const led = state.settings.resumeLed || $("set-resume-led")?.value;
+        if (led && led !== "none" && window.deskly?.blinkLed) {
+          window.deskly.blinkLed(led, 3000).catch(() => {});
+        }
+      };
+    }
   } catch (err) {
     log("warn", "LED", `Failed to initialize LED list: ${err.message}`);
   }

@@ -293,15 +293,39 @@ function setCursorPixels(x, y) {
 //  WINDOWS LOW-LEVEL KEYBOARD HOOK (Isolates Host keystrokes for 4x Pause / 4x Resume)
 // ══════════════════════════════════════════════════════════════════════════════
 
+function normalizeVk(vk) {
+  if (vk === 0xA2 || vk === 0xA3) return 0x11; // VK_CONTROL
+  if (vk === 0xA4 || vk === 0xA5) return 0x12; // VK_MENU / Alt
+  if (vk === 0xA0 || vk === 0xA1) return 0x10; // VK_SHIFT
+  return vk;
+}
+
 const SHORTCUT_KEY_DEFS = {
-  ctrl: { id: "ctrl", name: "Control (Ctrl)", vks: [0x11, 0xA2, 0xA3], isLed: false },
-  alt: { id: "alt", name: "Alt", vks: [0x12, 0xA4, 0xA5], isLed: false },
-  shift: { id: "shift", name: "Shift", vks: [0x10, 0xA0, 0xA1], isLed: false },
+  ctrl: { id: "ctrl", name: "Control (Ctrl)", vks: [0x11], isLed: false },
+  alt: { id: "alt", name: "Alt", vks: [0x12], isLed: false },
+  shift: { id: "shift", name: "Shift", vks: [0x10], isLed: false },
   caps: { id: "caps", name: "Caps Lock (LED)", vks: [0x14], isLed: true },
+  touchpad: { id: "touchpad", name: "Trackpad / Touchpad (LED)", vks: [0x97], isLed: true },
+  mute: { id: "mute", name: "Audio Mute (LED)", vks: [0xAD], isLed: true },
+  micmute: { id: "micmute", name: "Microphone Mute (LED)", vks: [0xF9], isLed: true },
+  fnlock: { id: "fnlock", name: "Fn Lock (LED)", vks: [0x86], isLed: true },
   num: { id: "num", name: "Num Lock (LED)", vks: [0x90], isLed: true },
   scroll: { id: "scroll", name: "Scroll Lock (LED)", vks: [0x91], isLed: true },
   space: { id: "space", name: "Spacebar", vks: [0x20], isLed: false },
   escape: { id: "escape", name: "Escape (Esc)", vks: [0x1b], isLed: false },
+  tab: { id: "tab", name: "Tab", vks: [0x09], isLed: false },
+  f1: { id: "f1", name: "F1 Key", vks: [0x70], isLed: false },
+  f2: { id: "f2", name: "F2 Key", vks: [0x71], isLed: false },
+  f3: { id: "f3", name: "F3 Key", vks: [0x72], isLed: false },
+  f4: { id: "f4", name: "F4 Key", vks: [0x73], isLed: false },
+  f5: { id: "f5", name: "F5 Key", vks: [0x74], isLed: false },
+  f6: { id: "f6", name: "F6 Key", vks: [0x75], isLed: false },
+  f7: { id: "f7", name: "F7 Key", vks: [0x76], isLed: false },
+  f8: { id: "f8", name: "F8 Key", vks: [0x77], isLed: false },
+  f9: { id: "f9", name: "F9 Key", vks: [0x78], isLed: false },
+  f10: { id: "f10", name: "F10 Key", vks: [0x79], isLed: false },
+  f11: { id: "f11", name: "F11 Key", vks: [0x7A], isLed: false },
+  f12: { id: "f12", name: "F12 Key", vks: [0x7B], isLed: false },
 };
 
 let hKeyboardHook = null;
@@ -332,7 +356,8 @@ function setShortcutKeys(pauseKeyId, resumeKeyId) {
   return false;
 }
 
-function isVkMatch(vk, keyId) {
+function isVkMatch(rawVk, keyId) {
+  const vk = normalizeVk(rawVk);
   const def = SHORTCUT_KEY_DEFS[keyId];
   if (!def || !def.vks) return false;
   return def.vks.includes(vk);
@@ -351,7 +376,8 @@ function keyboardHookProc(nCode, wParam, lParam) {
 
     // ONLY process physical Host keystrokes — ignore controller injected input!
     if (!isDesklyInjected) {
-      const vk = lParam.vkCode;
+      const rawVk = lParam.vkCode;
+      const vk = normalizeVk(rawVk);
       const isKeyDown = (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN);
       const isKeyUp = (wParam === WM_KEYUP || wParam === WM_SYSKEYUP);
 
@@ -361,7 +387,7 @@ function keyboardHookProc(nCode, wParam, lParam) {
           hostPressedKeys.add(vk);
 
           const now = Date.now();
-          if (now - lastHostKeyTime > 2000) {
+          if (now - lastHostKeyTime > 2500) {
             pauseTapCount = 0;
             resumeTapCount = 0;
           }
@@ -382,8 +408,11 @@ function keyboardHookProc(nCode, wParam, lParam) {
               if (onSequenceAction) onSequenceAction("resume");
             }
           } else {
-            pauseTapCount = 0;
-            resumeTapCount = 0;
+            // Do NOT reset tap count for modifier keys (Shift, Ctrl, Alt, CapsLock) pressed together
+            if (![0x10, 0x11, 0x12, 0x14, 0x5b, 0x5c].includes(vk)) {
+              pauseTapCount = 0;
+              resumeTapCount = 0;
+            }
           }
         }
       } else if (isKeyUp) {
@@ -429,17 +458,22 @@ function stopKeyboardHook() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const LED_DEFS = {
-  caps: { id: "caps", name: "Caps Lock", vk: 0x14, scan: 0x3a, ext: false },
-  num: { id: "num", name: "Num Lock", vk: 0x90, scan: 0x45, ext: true },
-  scroll: { id: "scroll", name: "Scroll Lock", vk: 0x91, scan: 0x46, ext: false },
+  caps: { id: "caps", name: "Caps Lock LED", vk: 0x14, scan: 0x3a, ext: false },
+  touchpad: { id: "touchpad", name: "Trackpad / Touchpad LED", vk: 0x97, scan: 0x00, ext: true },
+  mute: { id: "mute", name: "Audio Mute LED", vk: 0xAD, scan: 0x20, ext: true },
+  micmute: { id: "micmute", name: "Microphone Mute LED", vk: 0xF9, scan: 0x00, ext: true },
+  fnlock: { id: "fnlock", name: "Fn Lock LED", vk: 0x86, scan: 0x00, ext: true },
+  num: { id: "num", name: "Num Lock LED", vk: 0x90, scan: 0x45, ext: true },
+  scroll: { id: "scroll", name: "Scroll Lock LED", vk: 0x91, scan: 0x46, ext: false },
 };
 
 function toggleLedKey(def) {
+  const scanCode = def.scan || MapVirtualKeyW(def.vk, 0) || 0;
   const flagsDown = def.ext ? 0x0001 : 0;
   const flagsUp = (def.ext ? 0x0001 : 0) | KEYEVENTF_KEYUP;
   markInject();
-  keybd_event(def.vk, def.scan, flagsDown, DESKLY_INJECTED_EXTRA_INFO);
-  keybd_event(def.vk, def.scan, flagsUp, DESKLY_INJECTED_EXTRA_INFO);
+  keybd_event(def.vk, scanCode, flagsDown, DESKLY_INJECTED_EXTRA_INFO);
+  keybd_event(def.vk, scanCode, flagsUp, DESKLY_INJECTED_EXTRA_INFO);
 }
 
 function getSystemKeyboardLedCount() {
@@ -447,7 +481,7 @@ function getSystemKeyboardLedCount() {
     const count = [32];
     const listBuf = Buffer.alloc(32 * 16);
     if (GetRawInputDeviceList(koffi.address(listBuf), count, 16) === 0 || count[0] === 0) {
-      return 3;
+      return 1;
     }
     let maxIndicators = 0;
     const infoBuf = Buffer.alloc(32);
@@ -469,24 +503,22 @@ function getSystemKeyboardLedCount() {
     }
     return maxIndicators;
   } catch {
-    return 3;
+    return 1;
   }
 }
 
 function getAvailableLeds() {
   const leds = [];
   const systemLedCount = getSystemKeyboardLedCount();
+  const hasFullDesktopKeyboard = systemLedCount >= 3;
 
-  for (const [key, def] of Object.entries(LED_DEFS)) {
+  for (const [id, def] of Object.entries(LED_DEFS)) {
     try {
-      const scan = MapVirtualKeyW(def.vk, 0);
-      if (scan > 0) {
-        if (def.id === "caps") {
-          if (systemLedCount >= 1) leds.push({ id: def.id, name: def.name });
-        } else if (def.id === "num") {
-          if (systemLedCount >= 2) leds.push({ id: def.id, name: def.name });
-        } else if (def.id === "scroll") {
-          if (systemLedCount >= 3) leds.push({ id: def.id, name: def.name });
+      if (id === "caps" || id === "touchpad" || id === "mute" || id === "micmute" || id === "fnlock") {
+        leds.push({ id: def.id, name: def.name });
+      } else if (id === "num" || id === "scroll") {
+        if (hasFullDesktopKeyboard) {
+          leds.push({ id: def.id, name: def.name });
         }
       }
     } catch {
