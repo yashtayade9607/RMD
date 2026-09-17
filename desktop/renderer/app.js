@@ -1281,11 +1281,11 @@ function updateInputPill() {
         if (state.inputArmed) {
           btn.textContent = "Pause Input";
           btn.className = "input-ctrl-btn btn-pause";
-          btn.title = "Pause sending keyboard & mouse input (or press Ctrl 4 times)";
+          btn.title = "Pause sending keyboard & mouse input";
         } else {
           btn.textContent = "Start Input";
           btn.className = "input-ctrl-btn btn-resume";
-          btn.title = "Start sending keyboard & mouse input (or press Alt 4 times)";
+          btn.title = "Start sending keyboard & mouse input";
         }
       }
     }
@@ -1324,14 +1324,14 @@ function controllerPauseInput() {
   dcSend({ t: "in", e: { kind: "key", code: "AltLeft", down: false } });
   dcSend({ t: "in", e: { kind: "key", code: "AltRight", down: false } });
   updateInputPill();
-  setSessionFeedback("Input PAUSED (Alt x4 to resume)");
+  setSessionFeedback("Input PAUSED");
 }
 
 function controllerResumeInput() {
   state.inputArmed = true;
   log("info", "Controller", "Controller resumed sending input");
   updateInputPill();
-  setSessionFeedback("Input ON (Ctrl x4 to pause)");
+  setSessionFeedback("Input ON");
 }
 
 // Controller GUI buttons to start & pause input
@@ -1509,8 +1509,8 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
-  // 4x Ctrl (pause) / 4x Alt (resume) tap detection
-  if (!isInputFocused && !ev.repeat) {
+  // 4x Ctrl (pause/block remote) / 4x Alt (resume/allow remote) tap detection ONLY on host side
+  if (state.isHosting && !isInputFocused && !ev.repeat) {
     if (tapResetTimer) clearTimeout(tapResetTimer);
     tapResetTimer = setTimeout(() => {
       ctrlTapCount = 0;
@@ -1528,8 +1528,7 @@ window.addEventListener("keydown", (ev) => {
         if (tapResetTimer) clearTimeout(tapResetTimer);
         ev.preventDefault();
         ev.stopPropagation();
-        if (state.isHosting) hostPauseRemoteInput();
-        else controllerPauseInput();
+        hostPauseRemoteInput();
         return;
       }
     } else if (isAlt) {
@@ -1540,8 +1539,7 @@ window.addEventListener("keydown", (ev) => {
         if (tapResetTimer) clearTimeout(tapResetTimer);
         ev.preventDefault();
         ev.stopPropagation();
-        if (state.isHosting) hostResumeRemoteInput();
-        else controllerResumeInput();
+        hostResumeRemoteInput();
         return;
       }
     } else {
