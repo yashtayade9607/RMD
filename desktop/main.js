@@ -178,20 +178,22 @@ function createWindow() {
 }
 
 function bindShortcuts() {
-  globalShortcut.register("CommandOrControl+Alt+Q", () => {
-    mainWindow?.webContents.send("deskly:hotkey", "pause");
-  });
-  globalShortcut.register("CommandOrControl+Alt+E", () => {
-    mainWindow?.webContents.send("deskly:hotkey", "resume");
-  });
-
-  // Windows low-level keyboard hook for physical 4x Ctrl (pause) / 4x Alt (resume) detection
-  try {
-    input.startKeyboardHook((action) => {
-      mainWindow?.webContents.send("deskly:hotkey", action);
+  if (startRole !== "controller") {
+    globalShortcut.register("CommandOrControl+Alt+Q", () => {
+      mainWindow?.webContents.send("deskly:hotkey", "pause");
     });
-  } catch (err) {
-    writeLog("warn", "Main", `Keyboard hook setup error: ${err.message}`);
+    globalShortcut.register("CommandOrControl+Alt+E", () => {
+      mainWindow?.webContents.send("deskly:hotkey", "resume");
+    });
+
+    // Windows low-level keyboard hook for physical 4x Ctrl (pause) / 4x Alt (resume) detection
+    try {
+      input.startKeyboardHook((action) => {
+        mainWindow?.webContents.send("deskly:hotkey", action);
+      });
+    } catch (err) {
+      writeLog("warn", "Main", `Keyboard hook setup error: ${err.message}`);
+    }
   }
 }
 
@@ -209,6 +211,22 @@ app.on("will-quit", () => {
   try { input.stopKeyboardHook(); } catch {}
   if (cursorTimer) clearInterval(cursorTimer);
   writeLog("info", "Main", "Deskly closing");
+});
+
+ipcMain.handle("deskly:get-leds", () => {
+  try {
+    return input.getAvailableLeds();
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle("deskly:blink-led", (_event, ledId, durationMs) => {
+  try {
+    return input.blinkLed(ledId, durationMs);
+  } catch {
+    return false;
+  }
 });
 
 ipcMain.handle("deskly:role", () => startRole || "");

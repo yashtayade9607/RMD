@@ -24,6 +24,8 @@ const state = {
     videoQuality: "balanced",
     screenSize: "adaptive",
     hostRunInBackground: false,
+    pauseLed: localStorage.getItem("desklyPauseLed") || "none",
+    resumeLed: localStorage.getItem("desklyResumeLed") || "none",
     recentDevices: [],
   },
   ws: null,
@@ -52,6 +54,36 @@ const state = {
   connectedCallerUsername: "",
   presenceMap: new Map(),
 };
+
+function triggerLedBlink(action) {
+  const led = action === "pause" ? state.settings.pauseLed : state.settings.resumeLed;
+  if (led && led !== "none" && window.deskly?.blinkLed) {
+    window.deskly.blinkLed(led, 3000).catch(() => {});
+  }
+}
+
+async function initLedDropdowns() {
+  if (!window.deskly?.getAvailableLeds) return;
+  try {
+    const leds = await window.deskly.getAvailableLeds();
+    const pauseSelect = $("set-pause-led");
+    const resumeSelect = $("set-resume-led");
+    if (pauseSelect && leds && leds.length) {
+      const curr = state.settings.pauseLed || pauseSelect.value || "none";
+      pauseSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
+        leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      pauseSelect.value = curr;
+    }
+    if (resumeSelect && leds && leds.length) {
+      const curr = state.settings.resumeLed || resumeSelect.value || "none";
+      resumeSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
+        leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      resumeSelect.value = curr;
+    }
+  } catch (err) {
+    log("warn", "LED", `Failed to initialize LED list: ${err.message}`);
+  }
+}
 
 function log(level, category, message, data) {
   const consoleFn = console[level] || console.log;
@@ -160,6 +192,8 @@ function paintHome() {
   $("set-quality").value = state.settings.videoQuality || "balanced";
   $("set-screen-size").value = state.settings.screenSize || "adaptive";
   $("set-background").checked = !!state.settings.hostRunInBackground;
+  if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
+  if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
   renderRecentDevices();
 }
 
@@ -288,6 +322,7 @@ async function bootstrap() {
     state.me = me;
     state.settings = me.settings || state.settings;
     state.savedAccess = await window.deskly.accessList();
+    await initLedDropdowns();
     paintHome();
     await openSocket();
     if (state.role === "host" && state.settings.hostRunInBackground) {
@@ -366,11 +401,15 @@ async function saveSettings() {
     videoQuality: $("set-quality").value,
     screenSize: $("set-screen-size").value,
     hostRunInBackground: $("set-background").checked,
+    pauseLed: $("set-pause-led")?.value || state.settings.pauseLed || "none",
+    resumeLed: $("set-resume-led")?.value || state.settings.resumeLed || "none",
     recentDevices: state.settings.recentDevices || [],
   };
+  localStorage.setItem("desklyPauseLed", state.settings.pauseLed);
+  localStorage.setItem("desklyResumeLed", state.settings.resumeLed);
   log("info", "Settings", "Saving settings", state.settings);
   const res = await api("/api/settings", { method: "PATCH", body: state.settings });
-  if (res.settings) state.settings = res.settings;
+  if (res.settings) state.settings = { ...state.settings, ...res.settings };
   $("save-msg").textContent = "Saved.";
   setTimeout(() => ($("save-msg").textContent = ""), 1500);
 }
@@ -386,6 +425,30 @@ $("set-background").onchange = async () => {
   await saveSettings();
   if (state.role === "host") await window.deskly.setBackground(state.settings.hostRunInBackground);
 };
+if ($("set-pause-led")) $("set-pause-led").onchange = saveSettings;
+if ($("set-resume-led")) $("set-resume-led").onchange = saveSettings;
+if ($("btn-test-pause-led")) {
+  $("btn-test-pause-led").onclick = () => {
+    const led = $("set-pause-led")?.value;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 3000);
+      setSessionFeedback(`Blinking ${led} for 3s...`);
+    } else {
+      setSessionFeedback("No Pause LED selected");
+    }
+  };
+}
+if ($("btn-test-resume-led")) {
+  $("btn-test-resume-led").onclick = () => {
+    const led = $("set-resume-led")?.value;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 3000);
+      setSessionFeedback(`Blinking ${led} for 3s...`);
+    } else {
+      setSessionFeedback("No Resume LED selected");
+    }
+  };
+}
 
 $("btn-copy-id").onclick = () => {
   const host = state.me?.devices?.host || state.me?.devices?.controller;
@@ -685,7 +748,17 @@ async function onSignal(msg) {
   }
 
   if (msg.type === "signal") {
-    await handleRtc(msg.data);
+    if (msg.data?.kind === "input-feedback" && !state.isHosting) {
+      const wasBlocked = state.remoteInputPaused;
+      state.remoteInputPaused = !!msg.data.paused;
+      updateInputPill();
+      if (wasBlocked !== state.remoteInputPaused) {
+        setSessionFeedback(msg.data.paused ? "⛔ Host blocked your input" : "✅ Host allowed your input");
+        triggerLedBlink(msg.data.paused ? "pause" : "resume");
+      }
+    } else {
+      await handleRtc(msg.data);
+    }
   }
 
   if (msg.type === "hangup") {
@@ -973,6 +1046,7 @@ function bindDataChannel(dc) {
       state.inputArmed = true;
       setSessionFeedback("Input ready — Host controls access.");
     } else {
+      dcSend({ t: "input-feedback", paused: state.remoteInputPaused });
       window.deskly.cursor().then((norm) => {
         if (norm && Number.isFinite(norm.x) && Number.isFinite(norm.y)) {
           dcSend({ t: "host-cursor", x: norm.x, y: norm.y });
@@ -1030,6 +1104,9 @@ async function onControlMessage(msg) {
       if (msg.t === "settings") {
         state.settings = { ...state.settings, ...msg.settings };
         syncSessionUi();
+      } else if (msg.t === "in" || msg.t === "cursor") {
+        // Echo blocked state back to ensure controller stays locked
+        dcSend({ t: "input-feedback", paused: true });
       }
       return;
     }
@@ -1090,6 +1167,7 @@ async function onControlMessage(msg) {
       updateInputPill();
       if (wasBlocked !== state.remoteInputPaused) {
         setSessionFeedback(msg.paused ? "⛔ Host blocked your input" : "✅ Host allowed your input");
+        triggerLedBlink(msg.paused ? "pause" : "resume");
       }
     }
     if (msg.t === "settings") {
@@ -1261,13 +1339,13 @@ function updateInputPill() {
     if (state.remoteInputPaused) {
       if (el) {
         el.textContent = "Host BLOCKED";
-        el.className = "pill off";
-        el.title = "Input is blocked by the host";
+        el.className = "pill off disabled";
+        el.title = "Input is blocked by the host machine";
       }
       if (btn) {
         btn.disabled = true;
         btn.textContent = "Host Blocked";
-        btn.className = "input-ctrl-btn btn-pause";
+        btn.className = "input-ctrl-btn btn-pause disabled";
         btn.title = "Input is blocked by the host machine";
       }
     } else {
@@ -1302,8 +1380,11 @@ function hostPauseRemoteInput() {
   log("info", "Host", "Host blocked remote input");
   if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
   dcSend({ t: "input-feedback", paused: true });
+  dcSendCursor({ t: "input-feedback", paused: true });
+  sendWs({ type: "signal", data: { kind: "input-feedback", paused: true } });
   updateInputPill();
   setSessionFeedback("⛔ Remote input BLOCKED (Alt x4 to allow)");
+  triggerLedBlink("pause");
 }
 
 function hostResumeRemoteInput() {
@@ -1311,8 +1392,11 @@ function hostResumeRemoteInput() {
   state.remoteInputPaused = false;
   log("info", "Host", "Host resumed remote input");
   dcSend({ t: "input-feedback", paused: false });
+  dcSendCursor({ t: "input-feedback", paused: false });
+  sendWs({ type: "signal", data: { kind: "input-feedback", paused: false } });
   updateInputPill();
   setSessionFeedback("✅ Remote input ALLOWED (Ctrl x4 to block)");
+  triggerLedBlink("resume");
 }
 
 function controllerPauseInput() {
@@ -1325,13 +1409,21 @@ function controllerPauseInput() {
   dcSend({ t: "in", e: { kind: "key", code: "AltRight", down: false } });
   updateInputPill();
   setSessionFeedback("Input PAUSED");
+  triggerLedBlink("pause");
 }
 
 function controllerResumeInput() {
+  if (state.remoteInputPaused) {
+    log("warn", "Controller", "Cannot resume input — Host has blocked input");
+    updateInputPill();
+    setSessionFeedback("⛔ Blocked by Host — cannot resume");
+    return;
+  }
   state.inputArmed = true;
   log("info", "Controller", "Controller resumed sending input");
   updateInputPill();
   setSessionFeedback("Input ON");
+  triggerLedBlink("resume");
 }
 
 // Controller GUI buttons to start & pause input
@@ -1342,7 +1434,10 @@ if (btnToggleInput) {
       if (state.remoteInputPaused) hostResumeRemoteInput();
       else hostPauseRemoteInput();
     } else {
-      if (state.remoteInputPaused) return;
+      if (state.remoteInputPaused) {
+        setSessionFeedback("⛔ Input blocked by Host");
+        return;
+      }
       if (state.inputArmed) controllerPauseInput();
       else controllerResumeInput();
     }
@@ -1356,7 +1451,10 @@ if (inputStatePill) {
       if (state.remoteInputPaused) hostResumeRemoteInput();
       else hostPauseRemoteInput();
     } else {
-      if (state.remoteInputPaused) return;
+      if (state.remoteInputPaused) {
+        setSessionFeedback("⛔ Input blocked by Host");
+        return;
+      }
       if (state.inputArmed) controllerPauseInput();
       else controllerResumeInput();
     }
@@ -1487,64 +1585,13 @@ video.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 const WIN_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 
-let ctrlTapCount = 0;
-let altTapCount = 0;
-let tapResetTimer = null;
-
 window.addEventListener("keydown", (ev) => {
-  const target = ev.target;
-  const isInputFocused = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
-
-  // Global hotkeys Ctrl+Alt+Q / Ctrl+Alt+E
-  if (ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
+  // Host-only hotkeys Ctrl+Alt+Q (block remote) / Ctrl+Alt+E (allow remote)
+  if (state.isHosting && ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
     ev.preventDefault();
-    if (ev.code === "KeyQ") {
-      if (state.isHosting) hostPauseRemoteInput();
-      else controllerPauseInput();
-    } else {
-      if (state.isHosting) hostResumeRemoteInput();
-      else controllerResumeInput();
-    }
+    if (ev.code === "KeyQ") hostPauseRemoteInput();
+    else hostResumeRemoteInput();
     return;
-  }
-
-  // 4x Ctrl (pause/block remote) / 4x Alt (resume/allow remote) tap detection ONLY on host side
-  if (state.isHosting && !isInputFocused && !ev.repeat) {
-    if (tapResetTimer) clearTimeout(tapResetTimer);
-    tapResetTimer = setTimeout(() => {
-      ctrlTapCount = 0;
-      altTapCount = 0;
-    }, 1500);
-
-    const isCtrl = ev.key === "Control" || ev.code === "ControlLeft" || ev.code === "ControlRight";
-    const isAlt = ev.key === "Alt" || ev.code === "AltLeft" || ev.code === "AltRight";
-
-    if (isCtrl) {
-      altTapCount = 0;
-      ctrlTapCount++;
-      if (ctrlTapCount >= 4) {
-        ctrlTapCount = 0;
-        if (tapResetTimer) clearTimeout(tapResetTimer);
-        ev.preventDefault();
-        ev.stopPropagation();
-        hostPauseRemoteInput();
-        return;
-      }
-    } else if (isAlt) {
-      ctrlTapCount = 0;
-      altTapCount++;
-      if (altTapCount >= 4) {
-        altTapCount = 0;
-        if (tapResetTimer) clearTimeout(tapResetTimer);
-        ev.preventDefault();
-        ev.stopPropagation();
-        hostResumeRemoteInput();
-        return;
-      }
-    } else {
-      ctrlTapCount = 0;
-      altTapCount = 0;
-    }
   }
 
   if (state.isHosting) return;

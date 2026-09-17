@@ -42,6 +42,8 @@ const SetWindowsHookExW = user32.func("void * __stdcall SetWindowsHookExW(int id
 const UnhookWindowsHookEx = user32.func("int __stdcall UnhookWindowsHookEx(void *hhk)");
 const CallNextHookEx = user32.func("intptr_t __stdcall CallNextHookEx(void *hhk, int nCode, uintptr_t wParam, KBDLLHOOKSTRUCT *lParam)");
 const GetAsyncKeyState = user32.func("int16 __stdcall GetAsyncKeyState(int vKey)");
+const GetKeyState = user32.func("int16 __stdcall GetKeyState(int vKey)");
+const MapVirtualKeyW = user32.func("uint32 __stdcall MapVirtualKeyW(uint32 uCode, uint32 uMapType)");
 
 const WH_KEYBOARD_LL = 13;
 const WM_KEYDOWN = 0x0100;
@@ -293,10 +295,14 @@ function keyboardHookProc(nCode, wParam, lParam) {
   if (nCode >= 0 && (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN)) {
     const flags = lParam.flags;
     const extraInfo = lParam.dwExtraInfo;
-    const isInjected = ((flags & 1) !== 0) || (extraInfo === DESKLY_INJECTED_EXTRA_INFO);
+    const isDesklyInjected =
+      ((flags & 0x10) !== 0) || // LLKHF_INJECTED
+      ((flags & 0x02) !== 0) || // LLKHF_LOWER_IL_INJECTED
+      (Number(extraInfo) === DESKLY_INJECTED_EXTRA_INFO) ||
+      (wasRecentInject(350));
 
     // ONLY process physical Host keystrokes — ignore controller injected input!
-    if (!isInjected) {
+    if (!isDesklyInjected) {
       const vk = lParam.vkCode;
       const now = Date.now();
       if (now - lastHostKeyTime > 1500) {
@@ -360,9 +366,95 @@ function stopKeyboardHook() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  KEYBOARD INDICATOR LEDS (Caps Lock, Num Lock, Scroll Lock)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const LED_DEFS = {
+  caps: { id: "caps", name: "Caps Lock", vk: 0x14, scan: 0x3a, ext: false },
+  num: { id: "num", name: "Num Lock", vk: 0x90, scan: 0x45, ext: true },
+  scroll: { id: "scroll", name: "Scroll Lock", vk: 0x91, scan: 0x46, ext: false },
+};
+
+function toggleLedKey(def) {
+  const flagsDown = def.ext ? 0x0001 : 0;
+  const flagsUp = (def.ext ? 0x0001 : 0) | KEYEVENTF_KEYUP;
+  markInject();
+  keybd_event(def.vk, def.scan, flagsDown, DESKLY_INJECTED_EXTRA_INFO);
+  keybd_event(def.vk, def.scan, flagsUp, DESKLY_INJECTED_EXTRA_INFO);
+}
+
+function getAvailableLeds() {
+  const leds = [];
+  for (const [key, def] of Object.entries(LED_DEFS)) {
+    try {
+      const scan = MapVirtualKeyW(def.vk, 0);
+      if (scan > 0 || def.scan > 0) {
+        leds.push({ id: def.id, name: def.name });
+      }
+    } catch {
+      leds.push({ id: def.id, name: def.name });
+    }
+  }
+  return leds;
+}
+
+let activeBlinkTimer = null;
+let activeBlinkStopTimer = null;
+let activeBlinkRestore = null;
+
+function stopActiveBlink() {
+  if (activeBlinkTimer) {
+    clearInterval(activeBlinkTimer);
+    activeBlinkTimer = null;
+  }
+  if (activeBlinkStopTimer) {
+    clearTimeout(activeBlinkStopTimer);
+    activeBlinkStopTimer = null;
+  }
+  if (activeBlinkRestore) {
+    try {
+      activeBlinkRestore();
+    } catch {}
+    activeBlinkRestore = null;
+  }
+}
+
+function blinkLed(ledId, durationMs = 3000) {
+  stopActiveBlink();
+  const def = LED_DEFS[ledId];
+  if (!def) return false;
+
+  let toggleCount = 0;
+  activeBlinkRestore = () => {
+    // If toggled an odd number of times, toggle once more to restore original lock state
+    if (toggleCount % 2 !== 0) {
+      toggleLedKey(def);
+    }
+  };
+
+  // Toggle immediately on start
+  toggleLedKey(def);
+  toggleCount++;
+
+  // Toggle every 250ms for the duration
+  activeBlinkTimer = setInterval(() => {
+    toggleLedKey(def);
+    toggleCount++;
+  }, 250);
+
+  activeBlinkStopTimer = setTimeout(() => {
+    stopActiveBlink();
+  }, Math.max(500, durationMs));
+
+  return true;
+}
+
 module.exports = {
   applyEvent,
+  blinkLed,
   cursorNormalized,
+  getAvailableLeds,
   getCursor,
   moveCursorBy,
   releaseAllKeys,

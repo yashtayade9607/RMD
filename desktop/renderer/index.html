@@ -162,8 +162,30 @@
                 <option value="1080p">1080p</option>
               </select>
             </label>
+            <label>Pause Indicator LED (blinks 3s on pause)
+              <div class="row-input">
+                <select id="set-pause-led">
+                  <option value="none">None (Disabled)</option>
+                  <option value="caps">Caps Lock</option>
+                  <option value="num">Num Lock</option>
+                  <option value="scroll">Scroll Lock</option>
+                </select>
+                <button id="btn-test-pause-led" class="compact" type="button" title="Test blink for 3 seconds">Test (3s)</button>
+              </div>
+            </label>
+            <label>Resume Indicator LED (blinks 3s on resume)
+              <div class="row-input">
+                <select id="set-resume-led">
+                  <option value="none">None (Disabled)</option>
+                  <option value="scroll">Scroll Lock</option>
+                  <option value="caps">Caps Lock</option>
+                  <option value="num">Num Lock</option>
+                </select>
+                <button id="btn-test-resume-led" class="compact" type="button" title="Test blink for 3 seconds">Test (3s)</button>
+              </div>
+            </label>
             <p class="muted">
-              <strong>Controller:</strong> Pause / Start input using the toolbar button or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> / <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd><br />
+              <strong>Controller:</strong> Pause / Start input using the toolbar button only<br />
               <strong>Host:</strong> Block remote: <kbd>Ctrl</kbd> 4 times (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd>) &nbsp;|&nbsp; Allow remote: <kbd>Alt</kbd> 4 times (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd>)
             </p>
             <p class="ok" id="save-msg"></p>
