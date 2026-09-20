@@ -7,19 +7,37 @@ const roleArg = process.argv.find((a) => a.startsWith("--role="));
 const startRole = roleArg ? roleArg.split("=")[1] : "";
 const apiArg = process.argv.find((a) => a.startsWith("--api-url="));
 
+function parseApiUrl(str) {
+  if (typeof str !== "string") return "";
+  let url = str.trim().replace(/\/$/, "");
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) {
+    url = "https://" + url;
+  }
+  return url;
+}
+
 function configuredApiUrl() {
-  if (apiArg) return apiArg.slice("--api-url=".length).replace(/\/$/, "");
+  if (apiArg) return parseApiUrl(apiArg.slice("--api-url=".length));
+
   const bundledConfig = app.isPackaged
     ? path.join(process.resourcesPath, "deskly.config.json")
     : path.join(__dirname, "..", "deskly.config.json");
   const userConfig = path.join(app.getPath("userData"), "deskly.config.json");
-  // The per-user file takes priority, so an installed app can switch from a
-  // local test server to the public deployment without reinstalling.
-  for (const filePath of [userConfig, bundledConfig]) {
+
+  const checkOrder = app.isPackaged ? [userConfig, bundledConfig] : [bundledConfig, userConfig];
+
+  for (const filePath of checkOrder) {
     try {
       const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      if (typeof config.apiUrl === "string" && /^https?:\/\//.test(config.apiUrl)) {
-        return config.apiUrl.replace(/\/$/, "");
+      const parsed = parseApiUrl(config.apiUrl);
+      if (parsed) {
+        try {
+          fs.writeFileSync(userConfig, JSON.stringify({ apiUrl: parsed }, null, 2), "utf8");
+        } catch {
+          /* ignore */
+        }
+        return parsed;
       }
     } catch {
       // Continue to the next configuration location.
