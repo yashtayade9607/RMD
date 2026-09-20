@@ -22,18 +22,16 @@ export function attachSignaling(app) {
     }
   }
 
-  async function broadcastPresence(userId, role, online) {
+  async function broadcastPresence(userId, online) {
     try {
       const user = await User.findById(userId).select("username");
-      const device = await Device.findOne({ ownerId: userId, role }).select("publicId");
-      if (!device) return;
+      const devices = await Device.find({ ownerId: userId }).select("publicId role");
       const payload = {
         type: "presence",
         userId: String(userId),
         username: user?.username || "",
-        publicIds: [device.publicId],
+        publicIds: devices.map((d) => d.publicId),
         online: !!online,
-        role,
       };
       for (const s of sockets.values()) {
         send(s, payload);
@@ -43,22 +41,22 @@ export function attachSignaling(app) {
     }
   }
 
-  async function updateDevicePresence(userId, role) {
+  async function updateDevicePresence(userId) {
     const userSet = userSockets.get(String(userId));
     let isOnline = false;
-    if (userSet) {
+    if (userSet && userSet.size > 0) {
       for (const s of userSet) {
-        if (s.readyState === 1 && s._desklyRole === role) {
+        if (s.readyState === 1) {
           isOnline = true;
           break;
         }
       }
     }
-    await Device.updateOne(
-      { ownerId: userId, role },
+    await Device.updateMany(
+      { ownerId: userId },
       { $set: { online: isOnline, lastSeenAt: new Date() } }
     );
-    await broadcastPresence(userId, role, isOnline);
+    await broadcastPresence(userId, isOnline);
   }
 
   app.get("/ws", { websocket: true }, async (socket, request) => {
@@ -114,7 +112,7 @@ export function attachSignaling(app) {
     socket._desklyUserId = user.sub;
     socket._desklyRole = role;
 
-    await updateDevicePresence(user.sub, role);
+    await updateDevicePresence(user.sub);
     send(socket, { type: "hello", role });
 
     socket.on("message", async (raw) => {
@@ -129,7 +127,7 @@ export function attachSignaling(app) {
         return;
       }
 
-      // Mode-agnostic connection: connect to host device
+      // Mode-agnostic connection: any connected device can initiate connection to any other device
       if (msg.type === "connect") {
         const targetId = String(msg.hostId || msg.targetId || "").replace(/\D/g, "");
         const targetDevice = await Device.findOne({ publicId: targetId });
@@ -154,15 +152,17 @@ export function attachSignaling(app) {
           return send(socket, { type: "connect-result", ok: false, error: "Wrong access password." });
         }
 
-        // Find active socket matching targetDevice.role (default "host")
+        // Find active socket for target owner (prefer host role if available)
         const targetUserSocketSet = userSockets.get(String(targetDevice.ownerId));
         let targetSocket = null;
         if (targetUserSocketSet && targetUserSocketSet.size > 0) {
-          const desiredRole = targetDevice.role || "host";
           for (const s of targetUserSocketSet) {
-            if (s.readyState === 1 && s._desklyRole === desiredRole) {
+            if (s.readyState === 1) {
+              if (s._desklyRole === "host") {
+                targetSocket = s;
+                break;
+              }
               targetSocket = s;
-              break;
             }
           }
         }
@@ -236,7 +236,7 @@ export function attachSignaling(app) {
           userSockets.delete(user.sub);
         }
       }
-      await updateDevicePresence(user.sub, role);
+      await updateDevicePresence(user.sub);
 
       if (socket.peer) {
         const peerSocket = socket.peer;
