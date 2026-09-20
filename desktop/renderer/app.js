@@ -73,9 +73,10 @@ async function initLedDropdowns() {
       pauseSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
         leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
       pauseSelect.value = curr;
-      pauseSelect.onchange = () => {
+      pauseSelect.onchange = async () => {
         state.settings.pauseLed = pauseSelect.value;
         localStorage.setItem("desklyPauseLed", pauseSelect.value);
+        await saveSettings();
       };
     }
     if (resumeSelect && leds && leds.length) {
@@ -83,9 +84,10 @@ async function initLedDropdowns() {
       resumeSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
         leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
       resumeSelect.value = curr;
-      resumeSelect.onchange = () => {
+      resumeSelect.onchange = async () => {
         state.settings.resumeLed = resumeSelect.value;
         localStorage.setItem("desklyResumeLed", resumeSelect.value);
+        await saveSettings();
       };
     }
     if ($("btn-test-pause-led")) {

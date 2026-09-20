@@ -22,16 +22,18 @@ export function attachSignaling(app) {
     }
   }
 
-  async function broadcastPresence(userId, online) {
+  async function broadcastPresence(userId, role, online) {
     try {
       const user = await User.findById(userId).select("username");
-      const devices = await Device.find({ ownerId: userId }).select("publicId role");
+      const device = await Device.findOne({ ownerId: userId, role }).select("publicId");
+      if (!device) return;
       const payload = {
         type: "presence",
         userId: String(userId),
         username: user?.username || "",
-        publicIds: devices.map((d) => d.publicId),
-        online,
+        publicIds: [device.publicId],
+        online: !!online,
+        role,
       };
       for (const s of sockets.values()) {
         send(s, payload);
@@ -41,12 +43,22 @@ export function attachSignaling(app) {
     }
   }
 
-  async function setUserPresence(userId, online) {
-    await Device.updateMany(
-      { ownerId: userId },
-      { $set: { online, lastSeenAt: new Date() } }
+  async function updateDevicePresence(userId, role) {
+    const userSet = userSockets.get(String(userId));
+    let isOnline = false;
+    if (userSet) {
+      for (const s of userSet) {
+        if (s.readyState === 1 && s._desklyRole === role) {
+          isOnline = true;
+          break;
+        }
+      }
+    }
+    await Device.updateOne(
+      { ownerId: userId, role },
+      { $set: { online: isOnline, lastSeenAt: new Date() } }
     );
-    await broadcastPresence(userId, online);
+    await broadcastPresence(userId, role, isOnline);
   }
 
   app.get("/ws", { websocket: true }, async (socket, request) => {
@@ -102,7 +114,7 @@ export function attachSignaling(app) {
     socket._desklyUserId = user.sub;
     socket._desklyRole = role;
 
-    await setUserPresence(user.sub, true);
+    await updateDevicePresence(user.sub, role);
     send(socket, { type: "hello", role });
 
     socket.on("message", async (raw) => {
@@ -117,7 +129,7 @@ export function attachSignaling(app) {
         return;
       }
 
-      // Mode-agnostic connection: any connected device can initiate connection to any other device
+      // Mode-agnostic connection: connect to host device
       if (msg.type === "connect") {
         const targetId = String(msg.hostId || msg.targetId || "").replace(/\D/g, "");
         const targetDevice = await Device.findOne({ publicId: targetId });
@@ -142,23 +154,21 @@ export function attachSignaling(app) {
           return send(socket, { type: "connect-result", ok: false, error: "Wrong access password." });
         }
 
-        // Find active socket for target owner regardless of mode
+        // Find active socket matching targetDevice.role (default "host")
         const targetUserSocketSet = userSockets.get(String(targetDevice.ownerId));
         let targetSocket = null;
         if (targetUserSocketSet && targetUserSocketSet.size > 0) {
+          const desiredRole = targetDevice.role || "host";
           for (const s of targetUserSocketSet) {
-            if (s.readyState === 1) {
-              if (s._desklyRole === "host") {
-                targetSocket = s;
-                break;
-              }
+            if (s.readyState === 1 && s._desklyRole === desiredRole) {
               targetSocket = s;
+              break;
             }
           }
         }
 
         if (!targetSocket || targetSocket.readyState !== 1) {
-          return send(socket, { type: "connect-result", ok: false, error: "The remote device is not online." });
+          return send(socket, { type: "connect-result", ok: false, error: "The controlled PC is not online." });
         }
 
         if (targetSocket === socket) {
@@ -224,9 +234,9 @@ export function attachSignaling(app) {
         userSet.delete(socket);
         if (userSet.size === 0) {
           userSockets.delete(user.sub);
-          await setUserPresence(user.sub, false);
         }
       }
+      await updateDevicePresence(user.sub, role);
 
       if (socket.peer) {
         const peerSocket = socket.peer;

@@ -41,7 +41,7 @@ First launch: create your username and password. The host window shows an ID. On
 
 ## Run the host in the background
 
-The controlled PC starts tray-only: no Command Prompt or Deskly window is shown once it is set up. Use `start-host.bat` (or `start-host-hidden.vbs`) to run it. Click the Deskly icon in the Windows notification area to open the settings/ID window when needed. Closing that window hides it instead of stopping the host; use **Exit Deskly** from the tray menu when you deliberately want to stop it.
+Enable **Run in background and start automatically when I sign in** on the Host. Deskly then starts tray-only after every Windows sign-in: no Command Prompt or window is shown. Click the Deskly icon in the Windows notification area to open it. Closing the window only hides it; use **Exit Deskly** from the tray menu to stop the current run, or turn off the background option to also remove Windows startup.
 
 - **Host:** Block remote input with `Ctrl+Alt+Q`; allow remote input with `Ctrl+Alt+E`.
 - **Controller:** Click the **Pause / Start Input** button in the toolbar (keyboard shortcuts removed from controller side).

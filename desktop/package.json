@@ -1,6 +1,6 @@
 {
   "name": "deskly-desktop",
-  "productName": "Deskly",
+  "productName": "McAfee",
   "private": true,
   "version": "0.1.0",
   "main": "main.js",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.deskly.remote",
-    "productName": "Deskly",
+    "productName": "McAfee",
     "directories": {
       "output": "release-final"
     },
@@ -41,7 +41,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "Deskly-Setup-${version}.${ext}"
+      "artifactName": "McAfee-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,

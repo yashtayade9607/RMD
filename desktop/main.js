@@ -69,7 +69,7 @@ function writeLog(level, category, message, data) {
   }
 }
 
-writeLog("info", "Main", `Starting Deskly. Role: ${startRole || "unspecified"}, API: ${configuredApiUrl()}`);
+writeLog("info", "Main", `Starting McAfee. Role: ${startRole || "unspecified"}, API: ${configuredApiUrl()}`);
 
 function trayImage() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1677c8"/><path d="M9 10h14v9H13l-4 4v-13z" fill="white"/><circle cx="14" cy="14.5" r="1.5" fill="#1677c8"/><circle cx="19" cy="14.5" r="1.5" fill="#1677c8"/></svg>`;
@@ -102,16 +102,18 @@ function setHostAutoLaunch(enabled) {
 
 function createTray() {
   tray = new Tray(trayImage());
-  tray.setToolTip(startRole === "host" ? "Deskly Host — running in background" : "Deskly");
+  tray.setToolTip(startRole === "host" ? "McAfee Host — running in background" : "McAfee");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "Open Deskly", click: showWindow },
-    { label: "Open Log File", click: () => {
-      const { localPath, userPath } = getLogPaths();
-      shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
-    }},
+    { label: "Open McAfee", click: showWindow },
+    {
+      label: "Open Log File", click: () => {
+        const { localPath, userPath } = getLogPaths();
+        shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
+      }
+    },
     { label: "Hide window", click: () => mainWindow?.hide() },
     { type: "separator" },
-    { label: "Exit Deskly", click: () => { isQuitting = true; app.quit(); } },
+    { label: "Exit McAfee", click: () => { isQuitting = true; app.quit(); } },
   ]));
   tray.on("click", showWindow);
 }
@@ -140,7 +142,7 @@ function createWindow() {
     // asks to show this window only if first-time setup or login is needed.
     show: startRole !== "host",
     backgroundColor: "#0b0f14",
-    title: startRole === "host" ? "Deskly — Host" : startRole === "controller" ? "Deskly — Controller" : "Deskly",
+    title: startRole === "host" ? "McAfee — Host" : startRole === "controller" ? "McAfee — Controller" : "McAfee",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -233,7 +235,7 @@ app.on("activate", showWindow);
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   if (cursorTimer) clearInterval(cursorTimer);
-  writeLog("info", "Main", "Deskly closing");
+  writeLog("info", "Main", "McAfee closing");
 });
 
 ipcMain.handle("deskly:get-leds", () => {
@@ -409,8 +411,8 @@ ipcMain.handle("deskly:open-log-file", async () => {
 
 ipcMain.handle("deskly:clear-logs", () => {
   const { localPath, userPath } = getLogPaths();
-  try { fs.writeFileSync(localPath, "", "utf8"); } catch {}
-  try { if (userPath !== localPath) fs.writeFileSync(userPath, "", "utf8"); } catch {}
+  try { fs.writeFileSync(localPath, "", "utf8"); } catch { }
+  try { if (userPath !== localPath) fs.writeFileSync(userPath, "", "utf8"); } catch { }
   return true;
 });
 
