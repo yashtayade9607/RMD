@@ -28,5 +28,5 @@ contextBridge.exposeInMainWorld("deskly", {
   openLogFile: () => ipcRenderer.invoke("deskly:open-log-file"),
   clearLogs: () => ipcRenderer.invoke("deskly:clear-logs"),
   getAvailableLeds: () => ipcRenderer.invoke("deskly:get-leds"),
-  blinkLed: (ledId, durationMs) => ipcRenderer.invoke("deskly:blink-led", ledId, durationMs),
+  blinkLed: (ledId, durationMs, fast) => ipcRenderer.invoke("deskly:blink-led", ledId, durationMs, fast),
 });

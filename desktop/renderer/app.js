@@ -30,6 +30,7 @@ const state = {
     hideTray: localStorage.getItem("desklyHideTray") === "true",
     pauseLed: localStorage.getItem("desklyPauseLed") || "none",
     resumeLed: localStorage.getItem("desklyResumeLed") || "none",
+    connectLed: localStorage.getItem("desklyConnectLed") || "none",
     recentDevices: [],
   },
   ws: null,
@@ -62,6 +63,13 @@ const state = {
 };
 
 function triggerLedBlink(action) {
+  if (action === "connect") {
+    const led = state.settings.connectLed;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 2000, true).catch(() => {});
+    }
+    return;
+  }
   const count = action === "pause" ? 2 : 3;
   const led = action === "pause" ? state.settings.pauseLed : state.settings.resumeLed;
   if (led && led !== "none" && window.deskly?.blinkLed) {
@@ -75,6 +83,18 @@ async function initLedDropdowns() {
     const leds = await window.deskly.getAvailableLeds();
     const pauseSelect = $("set-pause-led");
     const resumeSelect = $("set-resume-led");
+    const connectSelect = $("set-connect-led");
+    if (connectSelect && leds && leds.length) {
+      const curr = state.settings.connectLed || connectSelect.value || "none";
+      connectSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
+        leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      connectSelect.value = curr;
+      connectSelect.onchange = async () => {
+        state.settings.connectLed = connectSelect.value;
+        localStorage.setItem("desklyConnectLed", connectSelect.value);
+        await saveSettings();
+      };
+    }
     if (pauseSelect && leds && leds.length) {
       const curr = state.settings.pauseLed || pauseSelect.value || "none";
       pauseSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
@@ -95,6 +115,14 @@ async function initLedDropdowns() {
         state.settings.resumeLed = resumeSelect.value;
         localStorage.setItem("desklyResumeLed", resumeSelect.value);
         await saveSettings();
+      };
+    }
+    if ($("btn-test-connect-led")) {
+      $("btn-test-connect-led").onclick = () => {
+        const led = state.settings.connectLed || $("set-connect-led")?.value;
+        if (led && led !== "none" && window.deskly?.blinkLed) {
+          window.deskly.blinkLed(led, 2000, true).catch(() => {});
+        }
       };
     }
     if ($("btn-test-pause-led")) {
@@ -226,6 +254,7 @@ function paintHome() {
   $("set-screen-size").value = state.settings.screenSize || "adaptive";
   $("set-background").checked = !!state.settings.hostRunInBackground;
   if ($("set-hide-tray")) $("set-hide-tray").checked = !!state.settings.hideTray;
+  if ($("set-connect-led")) $("set-connect-led").value = state.settings.connectLed || "none";
   if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
   if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
   if (window.deskly?.setHideTray) window.deskly.setHideTray(!!state.settings.hideTray).catch(() => {});
@@ -490,10 +519,12 @@ async function saveSettings() {
     screenSize: $("set-screen-size").value,
     hostRunInBackground: $("set-background").checked,
     hideTray: $("set-hide-tray") ? $("set-hide-tray").checked : !!state.settings.hideTray,
+    connectLed: $("set-connect-led")?.value || state.settings.connectLed || "none",
     pauseLed: $("set-pause-led")?.value || state.settings.pauseLed || "none",
     resumeLed: $("set-resume-led")?.value || state.settings.resumeLed || "none",
     recentDevices: state.settings.recentDevices || [],
   };
+  localStorage.setItem("desklyConnectLed", state.settings.connectLed);
   localStorage.setItem("desklyPauseLed", state.settings.pauseLed);
   localStorage.setItem("desklyResumeLed", state.settings.resumeLed);
   log("info", "Settings", "Saving settings", state.settings);
@@ -520,8 +551,20 @@ if ($("set-hide-tray")) {
     if (window.deskly?.setHideTray) await window.deskly.setHideTray(state.settings.hideTray);
   };
 }
+if ($("set-connect-led")) $("set-connect-led").onchange = saveSettings;
 if ($("set-pause-led")) $("set-pause-led").onchange = saveSettings;
 if ($("set-resume-led")) $("set-resume-led").onchange = saveSettings;
+if ($("btn-test-connect-led")) {
+  $("btn-test-connect-led").onclick = () => {
+    const led = $("set-connect-led")?.value;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 2000, true);
+      setSessionFeedback(`Blinking ${led} fast for 2s...`);
+    } else {
+      setSessionFeedback("No Connection LED selected");
+    }
+  };
+}
 if ($("btn-test-pause-led")) {
   $("btn-test-pause-led").onclick = () => {
     const led = $("set-pause-led")?.value;
@@ -1156,6 +1199,7 @@ function bindDataChannel(dc) {
   dc.onopen = () => {
     log("info", "DataChannel", "WebRTC DataChannel opened");
     setStatus("P2P connected");
+    triggerLedBlink("connect");
     applyBitrate();
     window.deskly.startCursorLoop();
     if (!state.isHosting) {

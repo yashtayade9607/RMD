@@ -241,6 +241,9 @@ export async function registerRoutes(app) {
       if (validLedIds.includes(patch.resumeLed)) {
         allowed.resumeLed = patch.resumeLed;
       }
+      if (validLedIds.includes(patch.connectLed)) {
+        allowed.connectLed = patch.connectLed;
+      }
       if (Array.isArray(patch.recentDevices)) {
         allowed.recentDevices = patch.recentDevices
           .filter((item) => /^\d{9}$/.test(String(item?.publicId || "").replace(/\D/g, "")))

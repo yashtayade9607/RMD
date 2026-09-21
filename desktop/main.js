@@ -276,9 +276,9 @@ ipcMain.handle("deskly:get-leds", () => {
   }
 });
 
-ipcMain.handle("deskly:blink-led", (_event, ledId, durationMs) => {
+ipcMain.handle("deskly:blink-led", (_event, ledId, durationMs, fast) => {
   try {
-    return input.blinkLed(ledId, durationMs);
+    return input.blinkLed(ledId, durationMs, fast);
   } catch {
     return false;
   }

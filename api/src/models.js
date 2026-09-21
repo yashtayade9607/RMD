@@ -43,6 +43,11 @@ const settingsSchema = new mongoose.Schema(
       enum: ["none", "caps", "touchpad", "mute", "micmute", "fnlock", "num", "scroll"],
       default: "none",
     },
+    connectLed: {
+      type: String,
+      enum: ["none", "caps", "touchpad", "mute", "micmute", "fnlock", "num", "scroll"],
+      default: "none",
+    },
     recentDevices: {
       type: [{ publicId: String, username: String, accessPassword: String, lastConnectedAt: Date }],
       default: [],

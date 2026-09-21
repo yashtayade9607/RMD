@@ -600,14 +600,14 @@ function stopActiveBlink() {
   }
 }
 
-function blinkLed(ledId, countOrDuration = 3000) {
+function blinkLed(ledId, countOrDuration = 3000, fast = false) {
   stopActiveBlink();
   const def = LED_DEFS[ledId];
   if (!def) return false;
 
   const isCountMode = typeof countOrDuration === "number" && countOrDuration <= 10;
   const targetToggles = isCountMode ? Math.max(1, Math.round(countOrDuration)) * 2 : 0;
-  const intervalMs = isCountMode ? 180 : 250;
+  const intervalMs = fast ? 90 : (isCountMode ? 180 : 250);
 
   let toggleCount = 0;
   activeBlinkRestore = () => {
