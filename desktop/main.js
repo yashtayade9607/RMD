@@ -251,6 +251,8 @@ function bindShortcuts() {
   // while it is the active host, so switching roles after launch still works.
   registerShortcut("CommandOrControl+Alt+Q", "pause");
   registerShortcut("CommandOrControl+Alt+E", "resume");
+  registerShortcut("CommandOrControl+Alt+Semicolon", "exit");
+  registerShortcut("CommandOrControl+Alt+;", "exit");
 }
 
 app.whenReady().then(() => {
@@ -289,6 +291,12 @@ ipcMain.handle("deskly:role", () => startRole || "");
 ipcMain.handle("deskly:show-window", () => {
   showWindow();
   return { ok: true };
+});
+
+ipcMain.handle("deskly:exit-app", () => {
+  writeLog("info", "Main", "Exit app requested via host shortcut — killing process immediately");
+  isQuitting = true;
+  app.exit(0);
 });
 
 ipcMain.handle("deskly:set-background", (_evt, enabled) => {

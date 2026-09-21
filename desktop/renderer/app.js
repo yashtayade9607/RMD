@@ -1647,6 +1647,17 @@ window.deskly.onHotkey((name) => {
     isHosting: state.isHosting,
     inSession: state.wsInSession,
   });
+  if (name === "exit") {
+    if (state.role === "host" || state.isHosting) {
+      log("info", "Shortcut", "Host exit shortcut (Ctrl+Alt+;) activated — killing process");
+      if (window.deskly?.exitApp) {
+        window.deskly.exitApp();
+      }
+    } else {
+      log("warn", "Shortcut", "Exit shortcut ignored: this instance is not the host");
+    }
+    return;
+  }
   if (!state.isHosting) {
     log("warn", "Shortcut", `${name} ignored: this Deskly instance is not the active host`);
     return;

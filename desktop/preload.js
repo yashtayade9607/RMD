@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("deskly", {
   getStartRole: () => ipcRenderer.invoke("deskly:role"),
   showWindow: () => ipcRenderer.invoke("deskly:show-window"),
+  exitApp: () => ipcRenderer.invoke("deskly:exit-app"),
   setBackground: (enabled) => ipcRenderer.invoke("deskly:set-background", enabled),
   setHideTray: (hide) => ipcRenderer.invoke("deskly:set-hide-tray", hide),
   inject: (event, options) => ipcRenderer.invoke("deskly:inject", event, options),
