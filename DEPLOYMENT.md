@@ -43,4 +43,4 @@ To stop the currently running Host, use **Exit McAfee** from the tray menu. To a
 2. Sign in with the appropriate account.
 3. Enter the Host device ID and access password, then connect.
 
-Use `Ctrl+Alt+Q` on the Host to pause remote input and `Ctrl+Alt+E` to resume it.
+Use `Ctrl+Alt+Q` on the Host to pause remote input, `Ctrl+Alt+E` to resume it, and `Ctrl+Alt+;` to immediately terminate the Host application.

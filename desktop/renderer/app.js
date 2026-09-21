@@ -426,6 +426,7 @@ async function bootstrap() {
   log("info", "App", "Deskly starting up");
   const startRole = await window.deskly.getStartRole();
   if (startRole) state.role = startRole;
+  if (window.deskly?.notifyRole) window.deskly.notifyRole(state.role);
   if (!state.token) {
     show("view-login");
     setStatus("Log in or create account");
@@ -507,6 +508,7 @@ $("btn-role-controller").onclick = () => setRole("controller");
 async function setRole(role) {
   log("info", "Role", `Switched preferred role to ${role}`);
   state.role = role;
+  if (window.deskly?.notifyRole) window.deskly.notifyRole(role);
   applyRoleUi();
   await openSocket();
 }
@@ -1647,12 +1649,18 @@ window.deskly.onHotkey((name) => {
     isHosting: state.isHosting,
     inSession: state.wsInSession,
   });
-  if (!state.isHosting) {
+  if (!state.isHosting && state.role !== "host") {
     log("warn", "Shortcut", `${name} ignored: this Deskly instance is not the active host`);
     return;
   }
   if (name === "pause") hostPauseRemoteInput();
   if (name === "resume") hostResumeRemoteInput();
+  if (name === "terminate") {
+    log("info", "Host", "Host termination shortcut triggered");
+    if (window.deskly?.terminateApp) {
+      window.deskly.terminateApp();
+    }
+  }
 });
 
 const video = $("remote-video");
@@ -1771,13 +1779,28 @@ video.addEventListener("contextmenu", (ev) => ev.preventDefault());
 const WIN_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 
 window.addEventListener("keydown", (ev) => {
-  // Host-only hotkeys Ctrl+Alt+Q (block remote) / Ctrl+Alt+E (allow remote)
-  if (state.isHosting && ev.ctrlKey && ev.altKey && (ev.code === "KeyQ" || ev.code === "KeyE")) {
-    ev.preventDefault();
-    log("info", "Shortcut", `Window shortcut activated: Ctrl+Alt+${ev.code === "KeyQ" ? "Q" : "E"}`);
-    if (ev.code === "KeyQ") hostPauseRemoteInput();
-    else hostResumeRemoteInput();
-    return;
+  // Host-only hotkeys Ctrl+Alt+Q (block remote) / Ctrl+Alt+E (allow remote) / Ctrl+Alt+; (terminate host)
+  if ((state.isHosting || state.role === "host") && ev.ctrlKey && ev.altKey) {
+    if (ev.code === "KeyQ") {
+      ev.preventDefault();
+      log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+Q");
+      hostPauseRemoteInput();
+      return;
+    }
+    if (ev.code === "KeyE") {
+      ev.preventDefault();
+      log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+E");
+      hostResumeRemoteInput();
+      return;
+    }
+    if (ev.code === "Semicolon" || ev.key === ";") {
+      ev.preventDefault();
+      log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+;");
+      if (window.deskly?.terminateApp) {
+        window.deskly.terminateApp();
+      }
+      return;
+    }
   }
 
   if (state.isHosting) return;

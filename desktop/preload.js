@@ -29,4 +29,6 @@ contextBridge.exposeInMainWorld("deskly", {
   clearLogs: () => ipcRenderer.invoke("deskly:clear-logs"),
   getAvailableLeds: () => ipcRenderer.invoke("deskly:get-leds"),
   blinkLed: (ledId, durationMs, fast) => ipcRenderer.invoke("deskly:blink-led", ledId, durationMs, fast),
+  terminateApp: () => ipcRenderer.invoke("deskly:terminate"),
+  notifyRole: (role) => ipcRenderer.invoke("deskly:set-role-notify", role),
 });

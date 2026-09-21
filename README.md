@@ -43,7 +43,7 @@ First launch: create your username and password. The host window shows an ID. On
 
 Enable **Run in background and start automatically when I sign in** on the Host. Deskly then starts tray-only after every Windows sign-in: no Command Prompt or window is shown. Click the Deskly icon in the Windows notification area to open it. Closing the window only hides it; use **Exit Deskly** from the tray menu to stop the current run, or turn off the background option to also remove Windows startup.
 
-- **Host:** Block remote input with `Ctrl+Alt+Q`; allow remote input with `Ctrl+Alt+E`; exit/kill host process with `Ctrl+Alt+;`.
+- **Host:** Block remote input with `Ctrl+Alt+Q`; allow remote input with `Ctrl+Alt+E`; immediately terminate application with `Ctrl+Alt+;`.
 - **Controller:** Click the **Pause / Start Input** button in the toolbar (keyboard shortcuts removed from controller side).
 - **LED Indicators:** In Settings, choose a keyboard indicator LED (Caps Lock, Num Lock, Scroll Lock) to blink twice on pause and thrice on resume. Works on both host and controller independently.
 The Windows key from the controller is blocked.

@@ -227,10 +227,55 @@ function createWindow() {
   });
 }
 
+let currentRole = startRole || "";
+
+function terminateHost() {
+  writeLog("info", "Main", "Terminate shortcut (Ctrl+Alt+;) activated — shutting down host application gracefully");
+  isQuitting = true;
+  try {
+    input.releaseAllKeys();
+  } catch (err) {
+    writeLog("error", "Main", `Error releasing keys on terminate: ${err.message}`);
+  }
+  if (cursorTimer) {
+    clearInterval(cursorTimer);
+    cursorTimer = null;
+  }
+  try {
+    globalShortcut.unregisterAll();
+  } catch {}
+  if (tray) {
+    try {
+      tray.destroy();
+      tray = null;
+    } catch {}
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.removeAllListeners("close");
+      mainWindow.close();
+    } catch {}
+  }
+  app.quit();
+  setTimeout(() => {
+    try {
+      app.exit(0);
+    } catch {
+      process.exit(0);
+    }
+  }, 400).unref();
+}
+
 function bindShortcuts() {
   const registerShortcut = (accelerator, action) => {
     const registered = globalShortcut.register(accelerator, () => {
       writeLog("info", "Shortcut", `${accelerator} activated`, { action });
+      if (action === "terminate") {
+        if (startRole === "host" || currentRole === "host" || !mainWindow?.webContents) {
+          terminateHost();
+          return;
+        }
+      }
       if (mainWindow?.webContents) {
         mainWindow.webContents.send("deskly:hotkey", action);
       } else {
@@ -251,6 +296,7 @@ function bindShortcuts() {
   // while it is the active host, so switching roles after launch still works.
   registerShortcut("CommandOrControl+Alt+Q", "pause");
   registerShortcut("CommandOrControl+Alt+E", "resume");
+  registerShortcut("CommandOrControl+Alt+;", "terminate");
 }
 
 app.whenReady().then(() => {
@@ -285,6 +331,16 @@ ipcMain.handle("deskly:blink-led", (_event, ledId, durationMs, fast) => {
 });
 
 ipcMain.handle("deskly:role", () => startRole || "");
+
+ipcMain.handle("deskly:terminate", () => {
+  terminateHost();
+  return { ok: true };
+});
+
+ipcMain.handle("deskly:set-role-notify", (_evt, role) => {
+  currentRole = String(role || "");
+  return true;
+});
 
 ipcMain.handle("deskly:show-window", () => {
   showWindow();
