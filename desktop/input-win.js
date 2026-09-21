@@ -600,10 +600,14 @@ function stopActiveBlink() {
   }
 }
 
-function blinkLed(ledId, durationMs = 3000) {
+function blinkLed(ledId, countOrDuration = 3000) {
   stopActiveBlink();
   const def = LED_DEFS[ledId];
   if (!def) return false;
+
+  const isCountMode = typeof countOrDuration === "number" && countOrDuration <= 10;
+  const targetToggles = isCountMode ? Math.max(1, Math.round(countOrDuration)) * 2 : 0;
+  const intervalMs = isCountMode ? 180 : 250;
 
   let toggleCount = 0;
   activeBlinkRestore = () => {
@@ -613,19 +617,28 @@ function blinkLed(ledId, durationMs = 3000) {
     }
   };
 
-  // Toggle immediately on start
+  // Toggle immediately on start (Toggle 1)
   toggleLedKey(def);
   toggleCount++;
 
-  // Toggle every 250ms for the duration
+  if (isCountMode && toggleCount >= targetToggles) {
+    stopActiveBlink();
+    return true;
+  }
+
   activeBlinkTimer = setInterval(() => {
     toggleLedKey(def);
     toggleCount++;
-  }, 250);
+    if (isCountMode && toggleCount >= targetToggles) {
+      stopActiveBlink();
+    }
+  }, intervalMs);
 
-  activeBlinkStopTimer = setTimeout(() => {
-    stopActiveBlink();
-  }, Math.max(500, durationMs));
+  if (!isCountMode) {
+    activeBlinkStopTimer = setTimeout(() => {
+      stopActiveBlink();
+    }, Math.max(500, countOrDuration));
+  }
 
   return true;
 }

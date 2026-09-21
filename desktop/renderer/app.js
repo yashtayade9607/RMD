@@ -6,6 +6,9 @@ const ICE = {
     { urls: "stun:stun.cloudflare.com:3478" },
   ],
   iceCandidatePoolSize: 2,
+  bundlePolicy: "max-bundle",
+  rtcpMuxPolicy: "require",
+  sdpSemantics: "unified-plan",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -29,6 +32,7 @@ const state = {
     recentDevices: [],
   },
   ws: null,
+  wsPingTimer: null,
   wsReconnectTimer: null,
   wsReconnectDelay: 1000,
   wsInSession: false,
@@ -56,9 +60,10 @@ const state = {
 };
 
 function triggerLedBlink(action) {
+  const count = action === "pause" ? 2 : 3;
   const led = action === "pause" ? state.settings.pauseLed : state.settings.resumeLed;
   if (led && led !== "none" && window.deskly?.blinkLed) {
-    window.deskly.blinkLed(led, 3000).catch(() => {});
+    window.deskly.blinkLed(led, count).catch(() => {});
   }
 }
 
@@ -94,7 +99,7 @@ async function initLedDropdowns() {
       $("btn-test-pause-led").onclick = () => {
         const led = state.settings.pauseLed || $("set-pause-led")?.value;
         if (led && led !== "none" && window.deskly?.blinkLed) {
-          window.deskly.blinkLed(led, 3000).catch(() => {});
+          window.deskly.blinkLed(led, 2).catch(() => {});
         }
       };
     }
@@ -102,7 +107,7 @@ async function initLedDropdowns() {
       $("btn-test-resume-led").onclick = () => {
         const led = state.settings.resumeLed || $("set-resume-led")?.value;
         if (led && led !== "none" && window.deskly?.blinkLed) {
-          window.deskly.blinkLed(led, 3000).catch(() => {});
+          window.deskly.blinkLed(led, 3).catch(() => {});
         }
       };
     }
@@ -459,8 +464,8 @@ if ($("btn-test-pause-led")) {
   $("btn-test-pause-led").onclick = () => {
     const led = $("set-pause-led")?.value;
     if (led && led !== "none" && window.deskly?.blinkLed) {
-      window.deskly.blinkLed(led, 3000);
-      setSessionFeedback(`Blinking ${led} for 3s...`);
+      window.deskly.blinkLed(led, 2);
+      setSessionFeedback(`Blinking ${led} twice...`);
     } else {
       setSessionFeedback("No Pause LED selected");
     }
@@ -470,8 +475,8 @@ if ($("btn-test-resume-led")) {
   $("btn-test-resume-led").onclick = () => {
     const led = $("set-resume-led")?.value;
     if (led && led !== "none" && window.deskly?.blinkLed) {
-      window.deskly.blinkLed(led, 3000);
-      setSessionFeedback(`Blinking ${led} for 3s...`);
+      window.deskly.blinkLed(led, 3);
+      setSessionFeedback(`Blinking ${led} thrice...`);
     } else {
       setSessionFeedback("No Resume LED selected");
     }
@@ -666,6 +671,10 @@ $("btn-change-password").onclick = async () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function stopWsReconnect() {
+  if (state.wsPingTimer) {
+    clearInterval(state.wsPingTimer);
+    state.wsPingTimer = null;
+  }
   if (state.wsReconnectTimer) {
     clearTimeout(state.wsReconnectTimer);
     state.wsReconnectTimer = null;
@@ -686,6 +695,7 @@ function scheduleWsReconnect() {
 
 function openSocket(isReconnect = false) {
   return new Promise((resolve) => {
+    stopWsReconnect();
     if (state.ws) {
       try {
         state.ws._desklyManaged = true;
@@ -704,6 +714,12 @@ function openSocket(isReconnect = false) {
     ws.onopen = () => {
       state.wsReconnectDelay = 1000;
       log("info", "Signaling", `WebSocket connected successfully`);
+      if (state.wsPingTimer) clearInterval(state.wsPingTimer);
+      state.wsPingTimer = setInterval(() => {
+        if (state.ws && state.ws.readyState === 1) {
+          sendWs({ type: "ping" });
+        }
+      }, 5000);
       if (isReconnect && state.wsInSession) {
         setStatus(state.isHosting ? "Host online" : "Connected (60 FPS)");
         setSessionFeedback("🔄 Signaling reconnected");
@@ -714,6 +730,10 @@ function openSocket(isReconnect = false) {
     };
 
     ws.onclose = (ev) => {
+      if (state.wsPingTimer) {
+        clearInterval(state.wsPingTimer);
+        state.wsPingTimer = null;
+      }
       if (ws._desklyManaged) return;
       log("warn", "Signaling", `WS closed (code=${ev.code})`);
       if (state.wsInSession) {
@@ -740,7 +760,11 @@ function sendWs(msg) {
 
 async function onSignal(msg) {
   if (msg.type === "presence") {
-    // msg: { userId, username, publicIds, online }
+    // msg: { userId, username, publicId, role, online } or publicIds array
+    if (msg.publicId) {
+      const cleanId = String(msg.publicId).replace(/\D/g, "");
+      state.presenceMap.set(cleanId, !!msg.online);
+    }
     for (const pubId of (msg.publicIds || [])) {
       const cleanId = String(pubId).replace(/\D/g, "");
       state.presenceMap.set(cleanId, !!msg.online);

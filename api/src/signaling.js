@@ -22,19 +22,22 @@ export function attachSignaling(app) {
     }
   }
 
-  async function broadcastPresence(userId, online) {
+  async function broadcastPresence(userId) {
     try {
       const user = await User.findById(userId).select("username");
-      const devices = await Device.find({ ownerId: userId }).select("publicId role");
-      const payload = {
-        type: "presence",
-        userId: String(userId),
-        username: user?.username || "",
-        publicIds: devices.map((d) => d.publicId),
-        online: !!online,
-      };
-      for (const s of sockets.values()) {
-        send(s, payload);
+      const devices = await Device.find({ ownerId: userId }).select("publicId role online");
+      for (const d of devices) {
+        const payload = {
+          type: "presence",
+          userId: String(userId),
+          username: user?.username || "",
+          publicId: d.publicId,
+          role: d.role,
+          online: !!d.online,
+        };
+        for (const s of sockets.values()) {
+          send(s, payload);
+        }
       }
     } catch {
       /* ignore */
@@ -43,20 +46,25 @@ export function attachSignaling(app) {
 
   async function updateDevicePresence(userId) {
     const userSet = userSockets.get(String(userId));
-    let isOnline = false;
+    let isHostOnline = false;
+    let isControllerOnline = false;
     if (userSet && userSet.size > 0) {
       for (const s of userSet) {
         if (s.readyState === 1) {
-          isOnline = true;
-          break;
+          if (s._desklyRole === "host") isHostOnline = true;
+          if (s._desklyRole === "controller") isControllerOnline = true;
         }
       }
     }
-    await Device.updateMany(
-      { ownerId: userId },
-      { $set: { online: isOnline, lastSeenAt: new Date() } }
+    await Device.updateOne(
+      { ownerId: userId, role: "host" },
+      { $set: { online: isHostOnline, lastSeenAt: new Date() } }
     );
-    await broadcastPresence(userId, isOnline);
+    await Device.updateOne(
+      { ownerId: userId, role: "controller" },
+      { $set: { online: isControllerOnline, lastSeenAt: new Date() } }
+    );
+    await broadcastPresence(userId);
   }
 
   app.get("/ws", { websocket: true }, async (socket, request) => {

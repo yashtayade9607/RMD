@@ -45,7 +45,7 @@ Enable **Run in background and start automatically when I sign in** on the Host.
 
 - **Host:** Block remote input with `Ctrl+Alt+Q`; allow remote input with `Ctrl+Alt+E`.
 - **Controller:** Click the **Pause / Start Input** button in the toolbar (keyboard shortcuts removed from controller side).
-- **LED Indicators:** In Settings, choose a keyboard indicator LED (Caps Lock, Num Lock, Scroll Lock) to blink for 3 seconds on pause and another for resume. Works on both host and controller independently.
+- **LED Indicators:** In Settings, choose a keyboard indicator LED (Caps Lock, Num Lock, Scroll Lock) to blink twice on pause and thrice on resume. Works on both host and controller independently.
 The Windows key from the controller is blocked.
 
 ## Session controls
