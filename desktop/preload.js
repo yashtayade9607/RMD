@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("deskly", {
   getStartRole: () => ipcRenderer.invoke("deskly:role"),
   showWindow: () => ipcRenderer.invoke("deskly:show-window"),
   setBackground: (enabled) => ipcRenderer.invoke("deskly:set-background", enabled),
+  setHideTray: (hide) => ipcRenderer.invoke("deskly:set-hide-tray", hide),
   inject: (event, options) => ipcRenderer.invoke("deskly:inject", event, options),
   releaseAllKeys: () => ipcRenderer.invoke("deskly:release-all-keys"),
   cursor: () => ipcRenderer.invoke("deskly:cursor"),

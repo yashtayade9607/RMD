@@ -118,7 +118,19 @@ function setHostAutoLaunch(enabled) {
   }
 }
 
+function setTrayVisibility(visible) {
+  if (!visible && tray) {
+    tray.destroy();
+    tray = null;
+    writeLog("info", "Tray", "System tray icon hidden by user preference");
+  } else if (visible && !tray) {
+    createTray();
+    writeLog("info", "Tray", "System tray icon restored");
+  }
+}
+
 function createTray() {
+  if (tray) return;
   tray = new Tray(trayImage());
   tray.setToolTip(startRole === "host" ? "McAfee Host — running in background" : "McAfee");
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -284,6 +296,11 @@ ipcMain.handle("deskly:set-background", (_evt, enabled) => {
   if (enabled) mainWindow?.hide();
   else showWindow();
   return { ok: startAtLogin || process.platform !== "win32", runningInBackground: !!enabled, startAtLogin };
+});
+
+ipcMain.handle("deskly:set-hide-tray", (_evt, hideTray) => {
+  setTrayVisibility(!hideTray);
+  return { ok: true, hideTray: !!hideTray };
 });
 
 ipcMain.handle("deskly:release-all-keys", () => {

@@ -27,6 +27,7 @@ const state = {
     videoQuality: "balanced",
     screenSize: "adaptive",
     hostRunInBackground: false,
+    hideTray: localStorage.getItem("desklyHideTray") === "true",
     pauseLed: localStorage.getItem("desklyPauseLed") || "none",
     resumeLed: localStorage.getItem("desklyResumeLed") || "none",
     recentDevices: [],
@@ -224,8 +225,10 @@ function paintHome() {
   $("set-quality").value = state.settings.videoQuality || "balanced";
   $("set-screen-size").value = state.settings.screenSize || "adaptive";
   $("set-background").checked = !!state.settings.hostRunInBackground;
+  if ($("set-hide-tray")) $("set-hide-tray").checked = !!state.settings.hideTray;
   if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
   if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
+  if (window.deskly?.setHideTray) window.deskly.setHideTray(!!state.settings.hideTray).catch(() => {});
   renderRecentDevices();
   startPresencePolling();
 }
@@ -486,6 +489,7 @@ async function saveSettings() {
     videoQuality: $("set-quality").value,
     screenSize: $("set-screen-size").value,
     hostRunInBackground: $("set-background").checked,
+    hideTray: $("set-hide-tray") ? $("set-hide-tray").checked : !!state.settings.hideTray,
     pauseLed: $("set-pause-led")?.value || state.settings.pauseLed || "none",
     resumeLed: $("set-resume-led")?.value || state.settings.resumeLed || "none",
     recentDevices: state.settings.recentDevices || [],
@@ -510,6 +514,12 @@ $("set-background").onchange = async () => {
   await saveSettings();
   if (state.role === "host") await window.deskly.setBackground(state.settings.hostRunInBackground);
 };
+if ($("set-hide-tray")) {
+  $("set-hide-tray").onchange = async () => {
+    await saveSettings();
+    if (window.deskly?.setHideTray) await window.deskly.setHideTray(state.settings.hideTray);
+  };
+}
 if ($("set-pause-led")) $("set-pause-led").onchange = saveSettings;
 if ($("set-resume-led")) $("set-resume-led").onchange = saveSettings;
 if ($("btn-test-pause-led")) {

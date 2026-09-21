@@ -231,6 +231,9 @@ export async function registerRoutes(app) {
       if (typeof patch.hostRunInBackground === "boolean") {
         allowed.hostRunInBackground = patch.hostRunInBackground;
       }
+      if (typeof patch.hideTray === "boolean") {
+        allowed.hideTray = patch.hideTray;
+      }
       const validLedIds = ["none", "caps", "touchpad", "mute", "micmute", "fnlock", "num", "scroll"];
       if (validLedIds.includes(patch.pauseLed)) {
         allowed.pauseLed = patch.pauseLed;
