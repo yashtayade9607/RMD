@@ -235,17 +235,37 @@ async function refreshPresence() {
   try {
     const res = await api("/api/presence");
     if (res && Array.isArray(res.devices)) {
+      const activeOnline = new Set(res.devices.map((d) => String(d.publicId).replace(/\D/g, "")));
+      for (const [key] of state.presenceMap.entries()) {
+        state.presenceMap.set(key, activeOnline.has(key));
+      }
       for (const d of res.devices) {
         if (d.publicId) {
           const cleanId = String(d.publicId).replace(/\D/g, "");
-          state.presenceMap.set(cleanId, !!d.online);
+          state.presenceMap.set(cleanId, true);
         }
       }
       renderRecentDevices();
+      updateTargetOnlineStatus();
     }
   } catch {
     /* ignore */
   }
+}
+
+function updateTargetOnlineStatus() {
+  const inputEl = $("connect-id");
+  const statusEl = $("target-online-status");
+  if (!inputEl || !statusEl) return;
+  const typed = String(inputEl.value || "").replace(/\D/g, "");
+  if (typed.length < 9) {
+    statusEl.textContent = "Enter Device ID";
+    statusEl.className = "pill muted";
+    return;
+  }
+  const isOnline = !!state.presenceMap.get(typed);
+  statusEl.textContent = isOnline ? "🟢 ONLINE" : "🔴 OFFLINE";
+  statusEl.className = "pill " + (isOnline ? "on" : "off");
 }
 
 function startPresencePolling() {
@@ -311,15 +331,17 @@ function renderRecentDevices() {
     const nameRow = document.createElement("div");
     nameRow.className = "recent-name-row";
 
-    const dot = document.createElement("span");
-    dot.className = "status-dot" + (device.online ? " online" : "");
-    dot.title = device.online ? "Device is Online" : "Device is Offline";
+    const badge = document.createElement("span");
+    badge.className = "pill " + (device.online ? "on" : "off");
+    badge.style.fontSize = "11px";
+    badge.style.padding = "1px 6px";
+    badge.textContent = device.online ? "🟢 ONLINE" : "🔴 OFFLINE";
 
     const name = document.createElement("span");
     name.className = "recent-username";
     name.textContent = device.username ? `@${device.username.replace(/^@/, "")}` : "Unknown device";
 
-    nameRow.append(dot, name);
+    nameRow.append(badge, name);
 
     const id = document.createElement("span");
     id.className = "recent-id";
@@ -596,6 +618,7 @@ $("connect-id").oninput = () => {
       $("connect-pass").value = found.password || found.accessPassword;
     }
   }
+  updateTargetOnlineStatus();
 };
 
 $("btn-save-username").onclick = async () => {
@@ -790,27 +813,23 @@ function sendWs(msg) {
 }
 
 async function onSignal(msg) {
-  if (msg.type === "presence") {
-    // msg: { userId, username, publicId, role, online } or publicIds array
+  if (msg.type === "presence" || msg.type === "presence-snapshot") {
     if (msg.publicId) {
       const cleanId = String(msg.publicId).replace(/\D/g, "");
       state.presenceMap.set(cleanId, !!msg.online);
     }
-    for (const pubId of (msg.publicIds || [])) {
-      const cleanId = String(pubId).replace(/\D/g, "");
-      state.presenceMap.set(cleanId, !!msg.online);
-    }
-    renderRecentDevices();
-  }
-
-  if (msg.type === "presence-snapshot") {
     for (const d of (msg.devices || [])) {
       if (d.publicId) {
         const cleanId = String(d.publicId).replace(/\D/g, "");
         state.presenceMap.set(cleanId, !!d.online);
       }
     }
+    for (const pubId of (msg.publicIds || [])) {
+      const cleanId = String(pubId).replace(/\D/g, "");
+      state.presenceMap.set(cleanId, !!msg.online);
+    }
     renderRecentDevices();
+    updateTargetOnlineStatus();
   }
 
   if (msg.type === "start-session") {
