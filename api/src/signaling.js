@@ -46,23 +46,18 @@ export function attachSignaling(app) {
 
   async function updateDevicePresence(userId) {
     const userSet = userSockets.get(String(userId));
-    let isHostOnline = false;
-    let isControllerOnline = false;
+    let isOnline = false;
     if (userSet && userSet.size > 0) {
       for (const s of userSet) {
         if (s.readyState === 1) {
-          if (s._desklyRole === "host") isHostOnline = true;
-          if (s._desklyRole === "controller") isControllerOnline = true;
+          isOnline = true;
+          break;
         }
       }
     }
-    await Device.updateOne(
-      { ownerId: userId, role: "host" },
-      { $set: { online: isHostOnline, lastSeenAt: new Date() } }
-    );
-    await Device.updateOne(
-      { ownerId: userId, role: "controller" },
-      { $set: { online: isControllerOnline, lastSeenAt: new Date() } }
+    await Device.updateMany(
+      { ownerId: userId },
+      { $set: { online: isOnline, lastSeenAt: new Date() } }
     );
     await broadcastPresence(userId);
   }
