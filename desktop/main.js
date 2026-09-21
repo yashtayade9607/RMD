@@ -7,22 +7,37 @@ const roleArg = process.argv.find((a) => a.startsWith("--role="));
 const startRole = roleArg ? roleArg.split("=")[1] : "";
 const apiArg = process.argv.find((a) => a.startsWith("--api-url="));
 
+function parseApiUrl(str) {
+  if (typeof str !== "string") return "";
+  let url = str.trim().replace(/\/$/, "");
+  if (!url) return "";
+  if (!/^https?:\/\//i.test(url)) {
+    url = "https://" + url;
+  }
+  return url;
+}
+
 function configuredApiUrl() {
-  if (apiArg) return apiArg.slice("--api-url=".length).trim().replace(/\s+/g, "").replace(/\/$/, "");
+  if (apiArg) return parseApiUrl(apiArg.slice("--api-url=".length));
+
   const bundledConfig = app.isPackaged
     ? path.join(process.resourcesPath, "deskly.config.json")
     : path.join(__dirname, "..", "deskly.config.json");
   const userConfig = path.join(app.getPath("userData"), "deskly.config.json");
-  // The per-user file takes priority, so an installed app can switch from a
-  // local test server to the public deployment without reinstalling.
-  for (const filePath of [userConfig, bundledConfig]) {
+
+  const checkOrder = app.isPackaged ? [userConfig, bundledConfig] : [bundledConfig, userConfig];
+
+  for (const filePath of checkOrder) {
     try {
       const config = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      if (typeof config.apiUrl === "string") {
-        const cleaned = config.apiUrl.replace(/\s+/g, "").replace(/\/$/, "");
-        if (/^https?:\/\//i.test(cleaned)) {
-          return cleaned;
+      const parsed = parseApiUrl(config.apiUrl);
+      if (parsed) {
+        try {
+          fs.writeFileSync(userConfig, JSON.stringify({ apiUrl: parsed }, null, 2), "utf8");
+        } catch {
+          /* ignore */
         }
+        return parsed;
       }
     } catch {
       // Continue to the next configuration location.
@@ -72,15 +87,12 @@ function writeLog(level, category, message, data) {
   }
 }
 
-writeLog("info", "Main", `Starting Deskly. Role: ${startRole || "unspecified"}, API: ${configuredApiUrl()}`);
+writeLog("info", "Main", `Starting McAfee. Role: ${startRole || "unspecified"}, API: ${configuredApiUrl()}`);
 
 function trayImage() {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1677c8"/><path d="M9 10h14v9H13l-4 4v-13z" fill="white"/><circle cx="14" cy="14.5" r="1.5" fill="#1677c8"/><circle cx="19" cy="14.5" r="1.5" fill="#1677c8"/></svg>`;
   return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
 }
-
-let currentRole = startRole || "";
-let isHostInputPaused = false;
 
 function showWindow() {
   if (!mainWindow) return;
@@ -88,43 +100,51 @@ function showWindow() {
   mainWindow.focus();
 }
 
-function updateTrayMenu() {
-  if (!tray) return;
-  tray.setToolTip(currentRole === "host" ? "Deskly Host — running in background" : "Deskly");
-  const items = [
-    { label: "Open Deskly", click: showWindow },
-    { label: "Open Log File", click: () => {
-      const { localPath, userPath } = getLogPaths();
-      shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
-    }},
-  ];
+function setHostAutoLaunch(enabled) {
+  if (process.platform !== "win32") return false;
 
-  if (currentRole === "host") {
-    items.push(
-      { type: "separator" },
-      {
-        label: isHostInputPaused ? "Resume Remote Input (:qe)" : "Pause Remote Input (:qw)",
-        click: () => {
-          isHostInputPaused = !isHostInputPaused;
-          mainWindow?.webContents.send("deskly:hotkey", isHostInputPaused ? "pause" : "resume");
-          updateTrayMenu();
-        },
-      }
-    );
+  // In development Electron needs the app directory as its first argument;
+  // packaged builds launch the installed executable directly.
+  const args = app.isPackaged ? ["--role=host"] : [path.resolve(__dirname), "--role=host"];
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!enabled, args });
+    writeLog("info", "Startup", enabled
+      ? "Host background agent will start automatically at Windows sign-in"
+      : "Host background agent removed from Windows sign-in startup");
+    return true;
+  } catch (err) {
+    writeLog("error", "Startup", `Could not update Windows startup: ${err.message}`);
+    return false;
   }
+}
 
-  items.push(
-    { label: "Hide window", click: () => mainWindow?.hide() },
-    { type: "separator" },
-    { label: "Exit Deskly", click: () => { isQuitting = true; app.quit(); } }
-  );
-
-  tray.setContextMenu(Menu.buildFromTemplate(items));
+function setTrayVisibility(visible) {
+  if (!visible && tray) {
+    tray.destroy();
+    tray = null;
+    writeLog("info", "Tray", "System tray icon hidden by user preference");
+  } else if (visible && !tray) {
+    createTray();
+    writeLog("info", "Tray", "System tray icon restored");
+  }
 }
 
 function createTray() {
+  if (tray) return;
   tray = new Tray(trayImage());
-  updateTrayMenu();
+  tray.setToolTip(startRole === "host" ? "McAfee Host — running in background" : "McAfee");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open McAfee", click: showWindow },
+    {
+      label: "Open Log File", click: () => {
+        const { localPath, userPath } = getLogPaths();
+        shell.openPath(fs.existsSync(localPath) ? localPath : userPath);
+      }
+    },
+    { label: "Hide window", click: () => mainWindow?.hide() },
+    { type: "separator" },
+    { label: "Exit McAfee", click: () => { isQuitting = true; app.quit(); } },
+  ]));
   tray.on("click", showWindow);
 }
 
@@ -152,7 +172,7 @@ function createWindow() {
     // asks to show this window only if first-time setup or login is needed.
     show: startRole !== "host",
     backgroundColor: "#0b0f14",
-    title: startRole === "host" ? "Deskly — Host" : startRole === "controller" ? "Deskly — Controller" : "Deskly",
+    title: startRole === "host" ? "McAfee — Host" : startRole === "controller" ? "McAfee — Controller" : "McAfee",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -207,27 +227,92 @@ function createWindow() {
   });
 }
 
-function applyRoleShortcuts() {
-  globalShortcut.unregisterAll();
-  if (input.stopHostKeyWatcher) input.stopHostKeyWatcher();
+let currentRole = startRole || "";
 
-  // ONLY HOST can control pause/resume via :qw / :qe. Controller has NO shortcuts.
-  if (currentRole === "host") {
-    // Start background key watcher for physical :qw and :qe key sequence on the Host PC
-    if (input.startHostKeyWatcher) {
-      input.startHostKeyWatcher((action) => {
-        writeLog("info", "Main", `Host triggered ${action} via physical key sequence (:${action === "pause" ? "qw" : "qe"})`);
-        mainWindow?.webContents.send("deskly:hotkey", action);
-      });
-    }
+function terminateHost() {
+  writeLog("info", "Main", "Terminate shortcut (Ctrl+Alt+;) activated — shutting down host application gracefully");
+  isQuitting = true;
+  try {
+    input.releaseAllKeys();
+  } catch (err) {
+    writeLog("error", "Main", `Error releasing keys on terminate: ${err.message}`);
   }
+  if (cursorTimer) {
+    clearInterval(cursorTimer);
+    cursorTimer = null;
+  }
+  try {
+    globalShortcut.unregisterAll();
+  } catch {}
+  if (tray) {
+    try {
+      tray.destroy();
+      tray = null;
+    } catch {}
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.removeAllListeners("close");
+      mainWindow.close();
+    } catch {}
+  }
+  app.quit();
+  setTimeout(() => {
+    try {
+      app.exit(0);
+    } catch {
+      process.exit(0);
+    }
+  }, 400).unref();
+}
+
+function bindShortcuts() {
+  const registerShortcut = (accelerator, action) => {
+    const registered = globalShortcut.register(accelerator, () => {
+      writeLog("info", "Shortcut", `${accelerator} activated`, { action });
+      if (action === "terminate") {
+        if (mainWindow?.webContents) {
+          mainWindow.webContents.send("deskly:hotkey", action);
+          setTimeout(() => {
+            if (startRole === "host" || currentRole === "host") {
+              terminateHost();
+            }
+          }, 600);
+          return;
+        }
+        if (startRole === "host" || currentRole === "host") {
+          terminateHost();
+          return;
+        }
+      }
+      if (mainWindow?.webContents) {
+        mainWindow.webContents.send("deskly:hotkey", action);
+      } else {
+        writeLog("warn", "Shortcut", `${accelerator} activated but no renderer is available`);
+      }
+    });
+
+    writeLog(
+      registered ? "info" : "warn",
+      "Shortcut",
+      registered
+        ? `Registered global shortcut: ${accelerator}`
+        : `Could not register global shortcut: ${accelerator}. It may be in use by another app.`,
+    );
+  };
+
+  // Register in every Deskly instance. The renderer accepts these events only
+  // while it is the active host, so switching roles after launch still works.
+  registerShortcut("CommandOrControl+Alt+Q", "pause");
+  registerShortcut("CommandOrControl+Alt+E", "resume");
+  registerShortcut("CommandOrControl+Alt+;", "terminate");
 }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null); // Remove default File/Edit/View/Window/Help menu bar
   createWindow();
   createTray();
-  applyRoleShortcuts();
+  bindShortcuts();
 });
 
 app.on("activate", showWindow);
@@ -235,33 +320,36 @@ app.on("activate", showWindow);
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   if (cursorTimer) clearInterval(cursorTimer);
-  if (input.stopHostKeyWatcher) input.stopHostKeyWatcher();
-  writeLog("info", "Main", "Deskly closing");
+  writeLog("info", "Main", "McAfee closing");
 });
 
-ipcMain.handle("deskly:release-modifiers", () => {
+ipcMain.handle("deskly:get-leds", () => {
   try {
-    input.releaseAllModifiers();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
+    return input.getAvailableLeds();
+  } catch {
+    return [];
   }
 });
 
-ipcMain.handle("deskly:set-paused-state", (_evt, paused) => {
-  isHostInputPaused = !!paused;
-  updateTrayMenu();
-  return { ok: true };
-});
-
-ipcMain.handle("deskly:set-active-role", (_evt, role) => {
-  currentRole = String(role || "");
-  updateTrayMenu();
-  applyRoleShortcuts();
-  return { ok: true, role: currentRole };
+ipcMain.handle("deskly:blink-led", (_event, ledId, durationMs, fast) => {
+  try {
+    return input.blinkLed(ledId, durationMs, fast);
+  } catch {
+    return false;
+  }
 });
 
 ipcMain.handle("deskly:role", () => startRole || "");
+
+ipcMain.handle("deskly:terminate", () => {
+  terminateHost();
+  return { ok: true };
+});
+
+ipcMain.handle("deskly:set-role-notify", (_evt, role) => {
+  currentRole = String(role || "");
+  return true;
+});
 
 ipcMain.handle("deskly:show-window", () => {
   showWindow();
@@ -269,9 +357,24 @@ ipcMain.handle("deskly:show-window", () => {
 });
 
 ipcMain.handle("deskly:set-background", (_evt, enabled) => {
+  const startAtLogin = setHostAutoLaunch(enabled);
   if (enabled) mainWindow?.hide();
   else showWindow();
-  return { ok: true, runningInBackground: !!enabled };
+  return { ok: startAtLogin || process.platform !== "win32", runningInBackground: !!enabled, startAtLogin };
+});
+
+ipcMain.handle("deskly:set-hide-tray", (_evt, hideTray) => {
+  setTrayVisibility(!hideTray);
+  return { ok: true, hideTray: !!hideTray };
+});
+
+ipcMain.handle("deskly:release-all-keys", () => {
+  try {
+    input.releaseAllKeys();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 ipcMain.handle("deskly:inject", (_evt, event, options) => {
@@ -408,8 +511,8 @@ ipcMain.handle("deskly:open-log-file", async () => {
 
 ipcMain.handle("deskly:clear-logs", () => {
   const { localPath, userPath } = getLogPaths();
-  try { fs.writeFileSync(localPath, "", "utf8"); } catch {}
-  try { if (userPath !== localPath) fs.writeFileSync(userPath, "", "utf8"); } catch {}
+  try { fs.writeFileSync(localPath, "", "utf8"); } catch { }
+  try { if (userPath !== localPath) fs.writeFileSync(userPath, "", "utf8"); } catch { }
   return true;
 });
 

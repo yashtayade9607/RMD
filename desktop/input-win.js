@@ -10,25 +10,54 @@ const MOUSEEVENTF_RIGHTUP = 0x0010;
 const MOUSEEVENTF_MIDDLEDOWN = 0x0020;
 const MOUSEEVENTF_MIDDLEUP = 0x0040;
 const MOUSEEVENTF_WHEEL = 0x0800;
-const MOUSEEVENTF_ABSOLUTE = 0x8000;
 const KEYEVENTF_KEYUP = 0x0002;
 const SM_XVIRTUALSCREEN = 76;
 const SM_YVIRTUALSCREEN = 77;
 const SM_CXVIRTUALSCREEN = 78;
 const SM_CYVIRTUALSCREEN = 79;
-const VK_LWIN = 0x5b;
-const VK_RWIN = 0x5c;
+
+const DESKLY_INJECTED_EXTRA_INFO = 0xDE5C17;
 
 const POINT = koffi.struct("POINT", {
   x: "long",
   y: "long",
 });
 
+const KBDLLHOOKSTRUCT = koffi.struct("KBDLLHOOKSTRUCT", {
+  vkCode: "uint32",
+  scanCode: "uint32",
+  flags: "uint32",
+  time: "uint32",
+  dwExtraInfo: "uintptr",
+});
+
+const HOOKPROC = koffi.proto("intptr_t __stdcall HOOKPROC(int nCode, uintptr_t wParam, KBDLLHOOKSTRUCT *lParam)");
+
 const GetCursorPos = user32.func("int __stdcall GetCursorPos(_Out_ POINT *lpPoint)");
 const SetCursorPos = user32.func("int __stdcall SetCursorPos(int X, int Y)");
 const GetSystemMetrics = user32.func("int __stdcall GetSystemMetrics(int nIndex)");
 const mouse_event = user32.func("void __stdcall mouse_event(uint32 dwFlags, uint32 dx, uint32 dy, uint32 dwData, uintptr dwExtraInfo)");
 const keybd_event = user32.func("void __stdcall keybd_event(uint8 bVk, uint8 bScan, uint32 dwFlags, uintptr dwExtraInfo)");
+const SetWindowsHookExW = user32.func("void * __stdcall SetWindowsHookExW(int idHook, HOOKPROC *lpfn, void *hmod, uint32 dwThreadId)");
+const UnhookWindowsHookEx = user32.func("int __stdcall UnhookWindowsHookEx(void *hhk)");
+const CallNextHookEx = user32.func("intptr_t __stdcall CallNextHookEx(void *hhk, int nCode, uintptr_t wParam, KBDLLHOOKSTRUCT *lParam)");
+const GetAsyncKeyState = user32.func("int16 __stdcall GetAsyncKeyState(int vKey)");
+const GetKeyState = user32.func("int16 __stdcall GetKeyState(int vKey)");
+const MapVirtualKeyW = user32.func("uint32 __stdcall MapVirtualKeyW(uint32 uCode, uint32 uMapType)");
+
+const RAWINPUTDEVICELIST = koffi.struct("RAWINPUTDEVICELIST", {
+  hDevice: "uintptr",
+  dwType: "uint32",
+});
+
+const GetRawInputDeviceList = user32.func("uint32 __stdcall GetRawInputDeviceList(uintptr_t pList, _Inout_ uint32* pCount, uint32 cbSize)");
+const GetRawInputDeviceInfoW = user32.func("uint32 __stdcall GetRawInputDeviceInfoW(uintptr hDevice, uint32 uiCommand, uintptr pData, _Inout_ uint32* pcbSize)");
+
+const WH_KEYBOARD_LL = 13;
+const WM_KEYDOWN = 0x0100;
+const WM_KEYUP = 0x0101;
+const WM_SYSKEYDOWN = 0x0104;
+const WM_SYSKEYUP = 0x0105;
 
 let cachedBounds = null;
 let lastBoundsCheckAt = 0;
@@ -165,6 +194,7 @@ const CODE_TO_VK = {
 };
 
 let lastInjectAt = 0;
+const activeInjectedKeys = new Set();
 
 function markInject() {
   lastInjectAt = Date.now();
@@ -172,6 +202,22 @@ function markInject() {
 
 function isWinKey(code) {
   return code === "MetaLeft" || code === "MetaRight" || code === "OSLeft" || code === "OSRight";
+}
+
+function releaseAllKeys() {
+  for (const vk of activeInjectedKeys) {
+    try {
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, DESKLY_INJECTED_EXTRA_INFO);
+    } catch {
+      /* ignore */
+    }
+  }
+  activeInjectedKeys.clear();
+  try {
+    mouse_event(MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_MIDDLEUP, 0, 0, 0, DESKLY_INJECTED_EXTRA_INFO);
+  } catch {
+    /* ignore */
+  }
 }
 
 function applyEvent(evt, options = {}) {
@@ -200,12 +246,12 @@ function applyEvent(evt, options = {}) {
     else if (evt.button === 2) flags = evt.down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
     else flags = evt.down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP;
     markInject();
-    mouse_event(flags, 0, 0, 0, 0);
+    mouse_event(flags, 0, 0, 0, DESKLY_INJECTED_EXTRA_INFO);
     return;
   }
   if (evt.kind === "wheel") {
     markInject();
-    mouse_event(MOUSEEVENTF_WHEEL, 0, 0, Math.round(evt.deltaY * -120), 0);
+    mouse_event(MOUSEEVENTF_WHEEL, 0, 0, Math.round(evt.deltaY * -120), DESKLY_INJECTED_EXTRA_INFO);
     return;
   }
   if (evt.kind === "key") {
@@ -213,7 +259,13 @@ function applyEvent(evt, options = {}) {
     const vk = CODE_TO_VK[evt.code];
     if (!vk) return;
     markInject();
-    keybd_event(vk, 0, evt.down ? 0 : KEYEVENTF_KEYUP, 0);
+    if (evt.down) {
+      activeInjectedKeys.add(vk);
+      keybd_event(vk, 0, 0, DESKLY_INJECTED_EXTRA_INFO);
+    } else {
+      activeInjectedKeys.delete(vk);
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, DESKLY_INJECTED_EXTRA_INFO);
+    }
   }
 }
 
@@ -237,164 +289,390 @@ function setCursorPixels(x, y) {
   SetCursorPos(Math.round(x), Math.round(y));
 }
 
-const GetAsyncKeyState = user32.func("short __stdcall GetAsyncKeyState(int vKey)");
+// ══════════════════════════════════════════════════════════════════════════════
+//  WINDOWS LOW-LEVEL KEYBOARD HOOK (Isolates Host keystrokes for 4x Pause / 4x Resume)
+// ══════════════════════════════════════════════════════════════════════════════
 
-const VK_SHIFT = 0x10;
-const VK_OEM_1 = 0xba; // ; : on US/standard keyboards
-const VK_KEY_Q = 0x51;
-const VK_KEY_W = 0x57;
-const VK_KEY_E = 0x45;
+function normalizeVk(vk) {
+  if (vk === 0xA2 || vk === 0xA3) return 0x11; // VK_CONTROL
+  if (vk === 0xA4 || vk === 0xA5) return 0x12; // VK_MENU / Alt
+  if (vk === 0xA0 || vk === 0xA1) return 0x10; // VK_SHIFT
+  return vk;
+}
 
-let watcherTimer = null;
-let watcherSeqState = 0; // 0: idle, 1: saw ':', 2: saw ':q'
-let watcherSeqTimer = null;
-let prevShift = false;
-let prevColon = false;
-let prevQ = false;
-let prevW = false;
-let prevE = false;
+const SHORTCUT_KEY_DEFS = {
+  ctrl: { id: "ctrl", name: "Control (Ctrl)", vks: [0x11], isLed: false },
+  alt: { id: "alt", name: "Alt", vks: [0x12], isLed: false },
+  shift: { id: "shift", name: "Shift", vks: [0x10], isLed: false },
+  caps: { id: "caps", name: "Caps Lock (LED)", vks: [0x14], isLed: true },
+  touchpad: { id: "touchpad", name: "Trackpad / Touchpad (LED)", vks: [0x97], isLed: true },
+  mute: { id: "mute", name: "Audio Mute (LED)", vks: [0xAD], isLed: true },
+  micmute: { id: "micmute", name: "Microphone Mute (LED)", vks: [0xF9], isLed: true },
+  fnlock: { id: "fnlock", name: "Fn Lock (LED)", vks: [0x86], isLed: true },
+  num: { id: "num", name: "Num Lock (LED)", vks: [0x90], isLed: true },
+  scroll: { id: "scroll", name: "Scroll Lock (LED)", vks: [0x91], isLed: true },
+  space: { id: "space", name: "Spacebar", vks: [0x20], isLed: false },
+  escape: { id: "escape", name: "Escape (Esc)", vks: [0x1b], isLed: false },
+  tab: { id: "tab", name: "Tab", vks: [0x09], isLed: false },
+  f1: { id: "f1", name: "F1 Key", vks: [0x70], isLed: false },
+  f2: { id: "f2", name: "F2 Key", vks: [0x71], isLed: false },
+  f3: { id: "f3", name: "F3 Key", vks: [0x72], isLed: false },
+  f4: { id: "f4", name: "F4 Key", vks: [0x73], isLed: false },
+  f5: { id: "f5", name: "F5 Key", vks: [0x74], isLed: false },
+  f6: { id: "f6", name: "F6 Key", vks: [0x75], isLed: false },
+  f7: { id: "f7", name: "F7 Key", vks: [0x76], isLed: false },
+  f8: { id: "f8", name: "F8 Key", vks: [0x77], isLed: false },
+  f9: { id: "f9", name: "F9 Key", vks: [0x78], isLed: false },
+  f10: { id: "f10", name: "F10 Key", vks: [0x79], isLed: false },
+  f11: { id: "f11", name: "F11 Key", vks: [0x7A], isLed: false },
+  f12: { id: "f12", name: "F12 Key", vks: [0x7B], isLed: false },
+};
 
-function resetWatcherSeq() {
-  watcherSeqState = 0;
-  if (watcherSeqTimer) {
-    clearTimeout(watcherSeqTimer);
-    watcherSeqTimer = null;
+let hKeyboardHook = null;
+let hookCallbackPtr = null;
+let pollTimer = null;
+let onSequenceAction = null;
+
+let configuredPauseKeyId = "ctrl";
+let configuredResumeKeyId = "alt";
+
+let pauseTapCount = 0;
+let resumeTapCount = 0;
+let lastHostKeyTime = 0;
+let pollKeyStateMap = {};
+
+function setShortcutKeys(pauseKeyId, resumeKeyId) {
+  if (
+    pauseKeyId &&
+    SHORTCUT_KEY_DEFS[pauseKeyId] &&
+    resumeKeyId &&
+    SHORTCUT_KEY_DEFS[resumeKeyId] &&
+    pauseKeyId !== resumeKeyId
+  ) {
+    configuredPauseKeyId = pauseKeyId;
+    configuredResumeKeyId = resumeKeyId;
+    pauseTapCount = 0;
+    resumeTapCount = 0;
+    pollKeyStateMap = {};
+    return true;
+  }
+  return false;
+}
+
+function isVkMatch(rawVk, keyId) {
+  const vk = normalizeVk(rawVk);
+  const def = SHORTCUT_KEY_DEFS[keyId];
+  if (!def || !def.vks) return false;
+  return def.vks.includes(vk);
+}
+
+let hostPressedKeys = new Set();
+
+function keyboardHookProc(nCode, wParam, lParam) {
+  if (nCode >= 0) {
+    const flags = lParam.flags;
+    const extraInfo = lParam.dwExtraInfo;
+    const isDesklyInjected =
+      ((flags & 0x10) !== 0) || // LLKHF_INJECTED
+      ((flags & 0x02) !== 0) || // LLKHF_LOWER_IL_INJECTED
+      (Number(extraInfo) === DESKLY_INJECTED_EXTRA_INFO);
+
+    // A remote session may inject cursor updates continuously.  Do not use the
+    // time-based injection guard here: it would discard genuine host keys for
+    // as long as cursor movement continues (and could leave a key marked down).
+    // Low-level hook events contain explicit injected flags / extra info, which
+    // is sufficient to exclude Deskly's own synthetic key events.
+    if (!isDesklyInjected) {
+      const rawVk = lParam.vkCode;
+      const vk = normalizeVk(rawVk);
+      const isKeyDown = (wParam === WM_KEYDOWN || wParam === WM_SYSKEYDOWN);
+      const isKeyUp = (wParam === WM_KEYUP || wParam === WM_SYSKEYUP);
+
+      if (isKeyDown) {
+        if (!hostPressedKeys.has(vk)) {
+          hostPressedKeys.add(vk);
+          registerHostTap(vk);
+        }
+      } else if (isKeyUp) {
+        hostPressedKeys.delete(vk);
+      }
+    }
+  }
+  return CallNextHookEx(hKeyboardHook, nCode, wParam, lParam);
+}
+
+function registerHostTap(vk) {
+  const now = Date.now();
+  if (now - lastHostKeyTime > 2500) {
+    pauseTapCount = 0;
+    resumeTapCount = 0;
+  }
+  lastHostKeyTime = now;
+
+  if (isVkMatch(vk, configuredPauseKeyId)) {
+    resumeTapCount = 0;
+    pauseTapCount++;
+    if (pauseTapCount >= 4) {
+      pauseTapCount = 0;
+      if (onSequenceAction) onSequenceAction("pause");
+    }
+  } else if (isVkMatch(vk, configuredResumeKeyId)) {
+    pauseTapCount = 0;
+    resumeTapCount++;
+    if (resumeTapCount >= 4) {
+      resumeTapCount = 0;
+      if (onSequenceAction) onSequenceAction("resume");
+    }
+  } else {
+    if (![0x10, 0x11, 0x12, 0x14, 0x5b, 0x5c].includes(vk)) {
+      pauseTapCount = 0;
+      resumeTapCount = 0;
+    }
   }
 }
 
-function startHostKeyWatcher(onAction) {
-  if (watcherTimer) return;
-  resetWatcherSeq();
-  prevShift = false;
-  prevColon = false;
-  prevQ = false;
-  prevW = false;
-  prevE = false;
+function pollShortcutKeys() {
+  if (wasRecentInject(350)) return;
 
-  // Track ALL alphanumeric / printable keys so we can detect unexpected presses
-  // We sample ALL keys in the 0x20–0x5A range (Space, digits, letters) plus common punctuation
-  const ALL_TRACKED_VKS = [
-    VK_OEM_1, VK_KEY_Q, VK_KEY_W, VK_KEY_E,
-    // Every other letter A-Z except Q, W, E
-    0x41, 0x42, 0x43, 0x44, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b,
-    0x4c, 0x4d, 0x4e, 0x4f, 0x50,       0x52, 0x53, 0x54, 0x55,
-    0x56,             0x58, 0x59, 0x5a,
-    // Digits 0-9
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39,
-    // Space, Enter, Tab, Backspace, punctuation
-    0x20, 0x0d, 0x09, 0x08,
-    0xbc, 0xbe, 0xbf, 0xdb, 0xdd, 0xdc, 0xde, 0xc0, 0xbd, 0xbb,
-  ];
+  const pauseDef = SHORTCUT_KEY_DEFS[configuredPauseKeyId];
+  const resumeDef = SHORTCUT_KEY_DEFS[configuredResumeKeyId];
 
-  // Previous states for all tracked keys
-  const prevKeys = new Map(ALL_TRACKED_VKS.map(vk => [vk, false]));
+  if (pauseDef && pauseDef.vks) {
+    const isPauseDown = pauseDef.vks.some((vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0);
+    const wasPauseDown = !!pollKeyStateMap["pause"];
+    if (isPauseDown && !wasPauseDown) {
+      pollKeyStateMap["pause"] = true;
+      if (!hKeyboardHook) {
+        registerHostTap(pauseDef.vks[0]);
+      }
+    } else if (!isPauseDown && wasPauseDown) {
+      pollKeyStateMap["pause"] = false;
+    }
+  }
 
-  watcherTimer = setInterval(() => {
+  if (resumeDef && resumeDef.vks) {
+    const isResumeDown = resumeDef.vks.some((vk) => (GetAsyncKeyState(vk) & 0x8000) !== 0);
+    const wasResumeDown = !!pollKeyStateMap["resume"];
+    if (isResumeDown && !wasResumeDown) {
+      pollKeyStateMap["resume"] = true;
+      if (!hKeyboardHook) {
+        registerHostTap(resumeDef.vks[0]);
+      }
+    } else if (!isResumeDown && wasResumeDown) {
+      pollKeyStateMap["resume"] = false;
+    }
+  }
+}
+
+function startKeyboardHook(actionCallback) {
+  onSequenceAction = actionCallback;
+
+  if (!hKeyboardHook) {
     try {
-      // Ignore keys that were simulated / injected from remote controller
-      if (wasRecentInject(300)) return;
+      hookCallbackPtr = koffi.register(keyboardHookProc, koffi.pointer(HOOKPROC));
+      hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, hookCallbackPtr, null, 0);
+    } catch (err) {
+      console.error("[Hook] Failed to install WH_KEYBOARD_LL hook:", err.message);
+    }
+  }
 
-      const isShift    = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) !== 0;
-      const isColonKey = (GetAsyncKeyState(VK_OEM_1)   & 0x8000) !== 0;
-      const isQ        = (GetAsyncKeyState(VK_KEY_Q)   & 0x8000) !== 0;
-      const isW        = (GetAsyncKeyState(VK_KEY_W)   & 0x8000) !== 0;
-      const isE        = (GetAsyncKeyState(VK_KEY_E)   & 0x8000) !== 0;
+  if (!pollTimer) {
+    pollTimer = setInterval(pollShortcutKeys, 15);
+  }
+}
 
-      // Check if ANY unexpected key was freshly pressed this tick
-      let unexpectedPress = false;
-      for (const vk of ALL_TRACKED_VKS) {
-        const isDown = (GetAsyncKeyState(vk) & 0x8000) !== 0;
-        const wasDown = prevKeys.get(vk);
-        if (isDown && !wasDown) {
-          // A key was freshly pressed. Determine if it's "unexpected" for current state.
-          const isColon = vk === VK_OEM_1 && isShift;
-          const isQKey  = vk === VK_KEY_Q;
-          const isWKey  = vk === VK_KEY_W;
-          const isEKey  = vk === VK_KEY_E;
+function stopKeyboardHook() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (hKeyboardHook) {
+    try {
+      UnhookWindowsHookEx(hKeyboardHook);
+    } catch {
+      /* ignore */
+    }
+    hKeyboardHook = null;
+  }
+  if (hookCallbackPtr) {
+    try {
+      koffi.unregister(hookCallbackPtr);
+    } catch {
+      /* ignore */
+    }
+    hookCallbackPtr = null;
+  }
+}
 
-          if (watcherSeqState === 0) {
-            // In idle — only `:` (Shift+OEM_1) starts the sequence
-            if (!isColon) { /* idle, fine */ }
-          } else if (watcherSeqState === 1) {
-            // Waiting for Q — any other key is unexpected
-            if (!isQKey) { unexpectedPress = true; }
-          } else if (watcherSeqState === 2) {
-            // Waiting for W or E — any other key is unexpected
-            if (!isWKey && !isEKey) { unexpectedPress = true; }
+// ══════════════════════════════════════════════════════════════════════════════
+//  KEYBOARD INDICATOR LEDS (Caps Lock, Num Lock, Scroll Lock)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const LED_DEFS = {
+  caps: { id: "caps", name: "Caps Lock LED", vk: 0x14, scan: 0x3a, ext: false },
+  touchpad: { id: "touchpad", name: "Trackpad / Touchpad LED", vk: 0x97, scan: 0x00, ext: true },
+  mute: { id: "mute", name: "Audio Mute LED", vk: 0xAD, scan: 0x20, ext: true },
+  micmute: { id: "micmute", name: "Microphone Mute LED", vk: 0xF9, scan: 0x00, ext: true },
+  fnlock: { id: "fnlock", name: "Fn Lock LED", vk: 0x86, scan: 0x00, ext: true },
+  num: { id: "num", name: "Num Lock LED", vk: 0x90, scan: 0x45, ext: true },
+  scroll: { id: "scroll", name: "Scroll Lock LED", vk: 0x91, scan: 0x46, ext: false },
+};
+
+function toggleLedKey(def) {
+  const scanCode = def.scan || MapVirtualKeyW(def.vk, 0) || 0;
+  const flagsDown = def.ext ? 0x0001 : 0;
+  const flagsUp = (def.ext ? 0x0001 : 0) | KEYEVENTF_KEYUP;
+  markInject();
+  keybd_event(def.vk, scanCode, flagsDown, DESKLY_INJECTED_EXTRA_INFO);
+  keybd_event(def.vk, scanCode, flagsUp, DESKLY_INJECTED_EXTRA_INFO);
+}
+
+function getSystemKeyboardLedCount() {
+  try {
+    const count = [32];
+    const listBuf = Buffer.alloc(32 * 16);
+    if (GetRawInputDeviceList(koffi.address(listBuf), count, 16) === 0 || count[0] === 0) {
+      return 1;
+    }
+    let maxIndicators = 0;
+    const infoBuf = Buffer.alloc(32);
+    const sz = [32];
+    for (let i = 0; i < count[0]; i++) {
+      const dwType = listBuf.readUInt32LE(i * 16 + 8);
+      if (dwType === 1) { // 1 = RIM_TYPEKEYBOARD
+        const hDev = listBuf.readBigUInt64LE(i * 16);
+        infoBuf.writeUInt32LE(32, 0);
+        sz[0] = 32;
+        const res = GetRawInputDeviceInfoW(hDev, 0x2000000b, koffi.address(infoBuf), sz);
+        if (res !== 4294967295) {
+          const indicators = infoBuf.readUInt32LE(24);
+          if (indicators > maxIndicators) {
+            maxIndicators = indicators;
           }
         }
-        prevKeys.set(vk, isDown);
       }
+    }
+    return maxIndicators;
+  } catch {
+    return 1;
+  }
+}
 
-      if (unexpectedPress) {
-        resetWatcherSeq();
-        return;
-      }
+function getAvailableLeds() {
+  const leds = [];
+  const systemLedCount = getSystemKeyboardLedCount();
+  const hasFullDesktopKeyboard = systemLedCount >= 3;
 
-      const pressColon = isColonKey && !prevColon && isShift;
-      const pressQ     = isQ && !prevQ;
-      const pressW     = isW && !prevW;
-      const pressE     = isE && !prevE;
-
-      prevShift = isShift;
-      prevColon = isColonKey;
-      prevQ = isQ;
-      prevW = isW;
-      prevE = isE;
-
-      if (pressColon) {
-        watcherSeqState = 1; // Saw ':'
-        if (watcherSeqTimer) clearTimeout(watcherSeqTimer);
-        watcherSeqTimer = setTimeout(resetWatcherSeq, 3000);
-      } else if (watcherSeqState === 1 && pressQ) {
-        watcherSeqState = 2; // Saw ':q'
-        if (watcherSeqTimer) clearTimeout(watcherSeqTimer);
-        watcherSeqTimer = setTimeout(resetWatcherSeq, 3000);
-      } else if (watcherSeqState === 2) {
-        if (pressW) {
-          resetWatcherSeq();
-          if (typeof onAction === "function") onAction("pause");
-        } else if (pressE) {
-          resetWatcherSeq();
-          if (typeof onAction === "function") onAction("resume");
+  for (const [id, def] of Object.entries(LED_DEFS)) {
+    try {
+      if (id === "caps" || id === "touchpad" || id === "mute" || id === "micmute" || id === "fnlock") {
+        leds.push({ id: def.id, name: def.name });
+      } else if (id === "num" || id === "scroll") {
+        if (hasFullDesktopKeyboard) {
+          leds.push({ id: def.id, name: def.name });
         }
       }
-    } catch {
-      // Safety net
-    }
-  }, 25);
-}
-
-function stopHostKeyWatcher() {
-  if (watcherTimer) {
-    clearInterval(watcherTimer);
-    watcherTimer = null;
-  }
-  resetWatcherSeq();
-}
-
-function releaseAllModifiers() {
-  const vks = [0x10, 0x11, 0x12, 0x5b, 0x5c]; // VK_SHIFT, VK_CONTROL, VK_MENU (Alt), VK_LWIN, VK_RWIN
-  for (const vk of vks) {
-    try {
-      keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
     } catch {
       /* ignore */
     }
   }
+  return leds;
+}
+
+let activeBlinkTimer = null;
+let activeBlinkStopTimer = null;
+let activeBlinkRestore = null;
+
+function stopActiveBlink() {
+  if (activeBlinkTimer) {
+    clearInterval(activeBlinkTimer);
+    activeBlinkTimer = null;
+  }
+  if (activeBlinkStopTimer) {
+    clearTimeout(activeBlinkStopTimer);
+    activeBlinkStopTimer = null;
+  }
+  if (activeBlinkRestore) {
+    try {
+      activeBlinkRestore();
+    } catch {}
+    activeBlinkRestore = null;
+  }
+}
+
+function blinkLed(ledId, countOrDuration = 3000, fast = false) {
+  stopActiveBlink();
+  const def = LED_DEFS[ledId];
+  if (!def) return false;
+
+  const isCountMode = typeof countOrDuration === "number" && countOrDuration <= 10;
+  const targetToggles = isCountMode ? Math.max(1, Math.round(countOrDuration)) * 2 : 0;
+  const intervalMs = fast ? 90 : (isCountMode ? 180 : 250);
+
+  let toggleCount = 0;
+  activeBlinkRestore = () => {
+    // If toggled an odd number of times, toggle once more to restore original lock state
+    if (toggleCount % 2 !== 0) {
+      toggleLedKey(def);
+    }
+  };
+
+  // Toggle immediately on start (Toggle 1)
+  toggleLedKey(def);
+  toggleCount++;
+
+  if (isCountMode && toggleCount >= targetToggles) {
+    stopActiveBlink();
+    return true;
+  }
+
+  activeBlinkTimer = setInterval(() => {
+    toggleLedKey(def);
+    toggleCount++;
+    if (isCountMode && toggleCount >= targetToggles) {
+      stopActiveBlink();
+    }
+  }, intervalMs);
+
+  if (!isCountMode) {
+    activeBlinkStopTimer = setTimeout(() => {
+      stopActiveBlink();
+    }, Math.max(500, countOrDuration));
+  }
+
+  return true;
+}
+
+function getAvailableShortcutKeys() {
+  const availableLeds = getAvailableLeds().map((l) => l.id);
+  const keys = [];
+  for (const [id, def] of Object.entries(SHORTCUT_KEY_DEFS)) {
+    if (def.isLed) {
+      if (availableLeds.includes(id)) {
+        keys.push({ id: def.id, name: def.name, isLed: true });
+      }
+    } else {
+      keys.push({ id: def.id, name: def.name, isLed: false });
+    }
+  }
+  return keys;
 }
 
 module.exports = {
   applyEvent,
+  blinkLed,
   cursorNormalized,
+  getAvailableLeds,
+  getAvailableShortcutKeys,
   getCursor,
   moveCursorBy,
-  releaseAllModifiers,
+  releaseAllKeys,
   screenBounds,
   setCursorNormalized,
   setCursorPixels,
-  startHostKeyWatcher,
-  stopHostKeyWatcher,
+  setShortcutKeys,
+  startKeyboardHook,
+  stopKeyboardHook,
   toPixels,
   wasRecentInject,
 };

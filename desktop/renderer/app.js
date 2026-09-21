@@ -6,16 +6,20 @@ const ICE = {
     { urls: "stun:stun.cloudflare.com:3478" },
   ],
   iceCandidatePoolSize: 2,
+  bundlePolicy: "max-bundle",
+  rtcpMuxPolicy: "require",
+  sdpSemantics: "unified-plan",
 };
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const API = (params.get("apiUrl") || "http://127.0.0.1:3780").replace(/\s+/g, "").replace(/\/$/, "");
+const API = params.get("apiUrl") || "http://127.0.0.1:3780";
 const SIGNAL = API.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 
 const state = {
   token: localStorage.getItem("desklyToken") || "",
-  role: params.get("role") || "",
+  role: params.get("role") || "controller",
+  isHosting: false,
   me: null,
   settings: {
     mouseFollow: true,
@@ -23,10 +27,16 @@ const state = {
     videoQuality: "balanced",
     screenSize: "adaptive",
     hostRunInBackground: false,
+    hideTray: localStorage.getItem("desklyHideTray") === "true",
+    pauseLed: localStorage.getItem("desklyPauseLed") || "none",
+    resumeLed: localStorage.getItem("desklyResumeLed") || "none",
+    connectLed: localStorage.getItem("desklyConnectLed") || "none",
     recentDevices: [],
   },
   ws: null,
+  wsPingTimer: null,
   wsReconnectTimer: null,
+  presenceTimer: null,
   wsReconnectDelay: 1000,
   wsInSession: false,
   pc: null,
@@ -47,7 +57,94 @@ const state = {
   suppressSendMouseMoveUntil: 0,
   hostCursor: null,
   ctrlCursor: null,
+  connectedHostUsername: "",
+  connectedCallerUsername: "",
+  presenceMap: new Map(),
 };
+
+function triggerLedBlink(action) {
+  if (action === "connect") {
+    const led = state.settings.connectLed;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 2000, true).catch(() => {});
+    }
+    return;
+  }
+  const count = action === "pause" ? 2 : 3;
+  const led = action === "pause" ? state.settings.pauseLed : state.settings.resumeLed;
+  if (led && led !== "none" && window.deskly?.blinkLed) {
+    window.deskly.blinkLed(led, count).catch(() => {});
+  }
+}
+
+async function initLedDropdowns() {
+  if (!window.deskly?.getAvailableLeds) return;
+  try {
+    const leds = await window.deskly.getAvailableLeds();
+    const pauseSelect = $("set-pause-led");
+    const resumeSelect = $("set-resume-led");
+    const connectSelect = $("set-connect-led");
+    if (connectSelect && leds && leds.length) {
+      const curr = state.settings.connectLed || connectSelect.value || "none";
+      connectSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
+        leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      connectSelect.value = curr;
+      connectSelect.onchange = async () => {
+        state.settings.connectLed = connectSelect.value;
+        localStorage.setItem("desklyConnectLed", connectSelect.value);
+        await saveSettings();
+      };
+    }
+    if (pauseSelect && leds && leds.length) {
+      const curr = state.settings.pauseLed || pauseSelect.value || "none";
+      pauseSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
+        leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      pauseSelect.value = curr;
+      pauseSelect.onchange = async () => {
+        state.settings.pauseLed = pauseSelect.value;
+        localStorage.setItem("desklyPauseLed", pauseSelect.value);
+        await saveSettings();
+      };
+    }
+    if (resumeSelect && leds && leds.length) {
+      const curr = state.settings.resumeLed || resumeSelect.value || "none";
+      resumeSelect.innerHTML = '<option value="none">None (Disabled)</option>' +
+        leds.map((l) => `<option value="${l.id}">${l.name}</option>`).join("");
+      resumeSelect.value = curr;
+      resumeSelect.onchange = async () => {
+        state.settings.resumeLed = resumeSelect.value;
+        localStorage.setItem("desklyResumeLed", resumeSelect.value);
+        await saveSettings();
+      };
+    }
+    if ($("btn-test-connect-led")) {
+      $("btn-test-connect-led").onclick = () => {
+        const led = state.settings.connectLed || $("set-connect-led")?.value;
+        if (led && led !== "none" && window.deskly?.blinkLed) {
+          window.deskly.blinkLed(led, 2000, true).catch(() => {});
+        }
+      };
+    }
+    if ($("btn-test-pause-led")) {
+      $("btn-test-pause-led").onclick = () => {
+        const led = state.settings.pauseLed || $("set-pause-led")?.value;
+        if (led && led !== "none" && window.deskly?.blinkLed) {
+          window.deskly.blinkLed(led, 2).catch(() => {});
+        }
+      };
+    }
+    if ($("btn-test-resume-led")) {
+      $("btn-test-resume-led").onclick = () => {
+        const led = state.settings.resumeLed || $("set-resume-led")?.value;
+        if (led && led !== "none" && window.deskly?.blinkLed) {
+          window.deskly.blinkLed(led, 3).catch(() => {});
+        }
+      };
+    }
+  } catch (err) {
+    log("warn", "LED", `Failed to initialize LED list: ${err.message}`);
+  }
+}
 
 function log(level, category, message, data) {
   const consoleFn = console[level] || console.log;
@@ -137,8 +234,8 @@ function renderHostAccessPassword() {
 
 function paintHome() {
   show("view-home");
-  const host = state.me?.devices?.host;
-  $("host-id").textContent = host?.publicIdDisplay || host?.publicId || "—";
+  const host = state.me?.devices?.host || state.me?.devices?.controller;
+  $("host-id").textContent = host?.publicIdDisplay || (host?.publicId ? displayId(host.publicId) : "—");
   if (host?.accessPassword) {
     state.hostAccessPassword = host.accessPassword;
   }
@@ -156,7 +253,61 @@ function paintHome() {
   $("set-quality").value = state.settings.videoQuality || "balanced";
   $("set-screen-size").value = state.settings.screenSize || "adaptive";
   $("set-background").checked = !!state.settings.hostRunInBackground;
+  if ($("set-hide-tray")) $("set-hide-tray").checked = !!state.settings.hideTray;
+  if ($("set-connect-led")) $("set-connect-led").value = state.settings.connectLed || "none";
+  if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
+  if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
+  if (window.deskly?.setHideTray) window.deskly.setHideTray(!!state.settings.hideTray).catch(() => {});
   renderRecentDevices();
+  startPresencePolling();
+}
+
+async function refreshPresence() {
+  if (!state.token) return;
+  try {
+    const res = await api("/api/presence");
+    if (res && Array.isArray(res.devices)) {
+      const activeOnline = new Set(res.devices.map((d) => String(d.publicId).replace(/\D/g, "")));
+      for (const [key] of state.presenceMap.entries()) {
+        state.presenceMap.set(key, activeOnline.has(key));
+      }
+      for (const d of res.devices) {
+        if (d.publicId) {
+          const cleanId = String(d.publicId).replace(/\D/g, "");
+          state.presenceMap.set(cleanId, true);
+        }
+      }
+      renderRecentDevices();
+      updateTargetOnlineStatus();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function updateTargetOnlineStatus() {
+  const inputEl = $("connect-id");
+  const statusEl = $("target-online-status");
+  if (!inputEl || !statusEl) return;
+  const typed = String(inputEl.value || "").replace(/\D/g, "");
+  if (typed.length < 9) {
+    statusEl.textContent = "Enter Device ID";
+    statusEl.className = "pill muted";
+    return;
+  }
+  const isOnline = !!state.presenceMap.get(typed);
+  statusEl.textContent = isOnline ? "🟢 ONLINE" : "🔴 OFFLINE";
+  statusEl.className = "pill " + (isOnline ? "on" : "off");
+}
+
+function startPresencePolling() {
+  if (state.presenceTimer) clearInterval(state.presenceTimer);
+  refreshPresence().catch(() => {});
+  state.presenceTimer = setInterval(() => {
+    if (!state.wsInSession && state.token) {
+      refreshPresence().catch(() => {});
+    }
+  }, 3000);
 }
 
 function renderRecentDevices() {
@@ -167,11 +318,12 @@ function renderRecentDevices() {
   for (const item of localDevices) {
     const id = String(item.publicId || "").replace(/\D/g, "");
     if (id) {
+      const isOnline = state.presenceMap.has(id) ? !!state.presenceMap.get(id) : !!item.online;
       deviceMap.set(id, {
         publicId: id,
         username: item.username || "Unknown device",
         password: item.password || "",
-        online: false,
+        online: isOnline,
         lastConnectedAt: item.lastConnectedAt || null,
       });
     }
@@ -181,11 +333,12 @@ function renderRecentDevices() {
     const id = String(item.publicId || "").replace(/\D/g, "");
     if (id) {
       const existing = deviceMap.get(id);
+      const isOnline = state.presenceMap.has(id) ? !!state.presenceMap.get(id) : !!item.online;
       deviceMap.set(id, {
         publicId: id,
         username: item.username || existing?.username || "Unknown device",
         password: item.accessPassword || existing?.password || "",
-        online: !!item.online,
+        online: isOnline,
         lastConnectedAt: item.lastConnectedAt || existing?.lastConnectedAt,
       });
     }
@@ -210,15 +363,17 @@ function renderRecentDevices() {
     const nameRow = document.createElement("div");
     nameRow.className = "recent-name-row";
 
-    const dot = document.createElement("span");
-    dot.className = "status-dot" + (device.online ? " online" : "");
-    dot.title = device.online ? "Host is Online" : "Host is Offline";
+    const badge = document.createElement("span");
+    badge.className = "pill " + (device.online ? "on" : "off");
+    badge.style.fontSize = "11px";
+    badge.style.padding = "1px 6px";
+    badge.textContent = device.online ? "🟢 ONLINE" : "🔴 OFFLINE";
 
     const name = document.createElement("span");
     name.className = "recent-username";
-    name.textContent = device.username || "Unknown device";
+    name.textContent = device.username ? `@${device.username.replace(/^@/, "")}` : "Unknown device";
 
-    nameRow.append(dot, name);
+    nameRow.append(badge, name);
 
     const id = document.createElement("span");
     id.className = "recent-id";
@@ -264,18 +419,14 @@ function renderRecentDevices() {
 function applyRoleUi() {
   $("btn-role-host").classList.toggle("active", state.role === "host");
   $("btn-role-controller").classList.toggle("active", state.role === "controller");
-  $("host-info").classList.toggle("hidden", state.role !== "host");
-  $("background-setting").classList.toggle("hidden", state.role !== "host");
-  $("controller-box").classList.toggle("hidden", state.role !== "controller");
-  if (state.role === "host") setStatus("Host — waiting (no accept prompt)");
-  else if (state.role === "controller") setStatus("Controller — enter ID + password");
+  setStatus("Deskly Online — Ready to connect or host");
 }
 
 async function bootstrap() {
   log("info", "App", "Deskly starting up");
   const startRole = await window.deskly.getStartRole();
   if (startRole) state.role = startRole;
-  if (window.deskly?.setActiveRole && state.role) await window.deskly.setActiveRole(state.role);
+  if (window.deskly?.notifyRole) window.deskly.notifyRole(state.role);
   if (!state.token) {
     show("view-login");
     setStatus("Log in or create account");
@@ -285,10 +436,13 @@ async function bootstrap() {
   try {
     const me = await api("/api/me");
     state.me = me;
-    state.settings = me.settings || state.settings;
+    // Preserve local LED selections only for older database records that do
+    // not yet have these newly persisted settings. Database values win once set.
+    state.settings = { ...state.settings, ...(me.settings || {}) };
     state.savedAccess = await window.deskly.accessList();
+    await initLedDropdowns();
     paintHome();
-    if (state.role) await openSocket();
+    await openSocket();
     if (state.role === "host" && state.settings.hostRunInBackground) {
       await window.deskly.setBackground(true);
     }
@@ -311,8 +465,8 @@ function saveLogin(data) {
   state.token = data.token;
   localStorage.setItem("desklyToken", data.token);
   state.me = data;
-  state.settings = data.settings || state.settings;
-  state.hostAccessPassword = data.devices?.host?.accessPassword || "";
+  state.settings = { ...state.settings, ...(data.settings || {}) };
+  state.hostAccessPassword = data.devices?.host?.accessPassword || data.devices?.controller?.accessPassword || "";
   log("info", "Auth", `Logged in as user ${data.user?.username || "unknown"}`);
 }
 
@@ -339,7 +493,7 @@ $("btn-login").onclick = async () => {
     });
     saveLogin(data);
     paintHome();
-    if (state.role) await openSocket();
+    await openSocket();
     if (state.role === "host" && state.settings.hostRunInBackground) {
       await window.deskly.setBackground(true);
     }
@@ -352,9 +506,9 @@ $("btn-role-host").onclick = () => setRole("host");
 $("btn-role-controller").onclick = () => setRole("controller");
 
 async function setRole(role) {
-  log("info", "Role", `Switched role to ${role}`);
+  log("info", "Role", `Switched preferred role to ${role}`);
   state.role = role;
-  if (window.deskly?.setActiveRole) await window.deskly.setActiveRole(role);
+  if (window.deskly?.notifyRole) window.deskly.notifyRole(role);
   applyRoleUi();
   await openSocket();
 }
@@ -366,11 +520,18 @@ async function saveSettings() {
     videoQuality: $("set-quality").value,
     screenSize: $("set-screen-size").value,
     hostRunInBackground: $("set-background").checked,
+    hideTray: $("set-hide-tray") ? $("set-hide-tray").checked : !!state.settings.hideTray,
+    connectLed: $("set-connect-led")?.value || state.settings.connectLed || "none",
+    pauseLed: $("set-pause-led")?.value || state.settings.pauseLed || "none",
+    resumeLed: $("set-resume-led")?.value || state.settings.resumeLed || "none",
     recentDevices: state.settings.recentDevices || [],
   };
+  localStorage.setItem("desklyConnectLed", state.settings.connectLed);
+  localStorage.setItem("desklyPauseLed", state.settings.pauseLed);
+  localStorage.setItem("desklyResumeLed", state.settings.resumeLed);
   log("info", "Settings", "Saving settings", state.settings);
   const res = await api("/api/settings", { method: "PATCH", body: state.settings });
-  if (res.settings) state.settings = res.settings;
+  if (res.settings) state.settings = { ...state.settings, ...res.settings };
   $("save-msg").textContent = "Saved.";
   setTimeout(() => ($("save-msg").textContent = ""), 1500);
 }
@@ -386,9 +547,51 @@ $("set-background").onchange = async () => {
   await saveSettings();
   if (state.role === "host") await window.deskly.setBackground(state.settings.hostRunInBackground);
 };
+if ($("set-hide-tray")) {
+  $("set-hide-tray").onchange = async () => {
+    await saveSettings();
+    if (window.deskly?.setHideTray) await window.deskly.setHideTray(state.settings.hideTray);
+  };
+}
+if ($("set-connect-led")) $("set-connect-led").onchange = saveSettings;
+if ($("set-pause-led")) $("set-pause-led").onchange = saveSettings;
+if ($("set-resume-led")) $("set-resume-led").onchange = saveSettings;
+if ($("btn-test-connect-led")) {
+  $("btn-test-connect-led").onclick = () => {
+    const led = $("set-connect-led")?.value;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 2000, true);
+      setSessionFeedback(`Blinking ${led} fast for 2s...`);
+    } else {
+      setSessionFeedback("No Connection LED selected");
+    }
+  };
+}
+if ($("btn-test-pause-led")) {
+  $("btn-test-pause-led").onclick = () => {
+    const led = $("set-pause-led")?.value;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 2);
+      setSessionFeedback(`Blinking ${led} twice...`);
+    } else {
+      setSessionFeedback("No Pause LED selected");
+    }
+  };
+}
+if ($("btn-test-resume-led")) {
+  $("btn-test-resume-led").onclick = () => {
+    const led = $("set-resume-led")?.value;
+    if (led && led !== "none" && window.deskly?.blinkLed) {
+      window.deskly.blinkLed(led, 3);
+      setSessionFeedback(`Blinking ${led} thrice...`);
+    } else {
+      setSessionFeedback("No Resume LED selected");
+    }
+  };
+}
 
 $("btn-copy-id").onclick = () => {
-  const host = state.me?.devices?.host;
+  const host = state.me?.devices?.host || state.me?.devices?.controller;
   const val = host?.publicIdDisplay || host?.publicId || "";
   if (!val) return;
   navigator.clipboard.writeText(val.replace(/\s/g, ""));
@@ -470,6 +673,7 @@ $("connect-id").oninput = () => {
       $("connect-pass").value = found.password || found.accessPassword;
     }
   }
+  updateTargetOnlineStatus();
 };
 
 $("btn-save-username").onclick = async () => {
@@ -518,7 +722,7 @@ $("btn-register").onclick = async () => {
     });
     saveLogin(data);
     paintHome();
-    if (state.role) await openSocket();
+    await openSocket();
   } catch (e) {
     $("register-error").textContent = e.message;
   }
@@ -575,6 +779,10 @@ $("btn-change-password").onclick = async () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function stopWsReconnect() {
+  if (state.wsPingTimer) {
+    clearInterval(state.wsPingTimer);
+    state.wsPingTimer = null;
+  }
   if (state.wsReconnectTimer) {
     clearTimeout(state.wsReconnectTimer);
     state.wsReconnectTimer = null;
@@ -583,9 +791,8 @@ function stopWsReconnect() {
 
 function scheduleWsReconnect() {
   stopWsReconnect();
-  if (!state.token || !state.role) return;
+  if (!state.token) return;
   const delay = state.wsReconnectDelay;
-  // Exponential back-off: 1s → 2s → 4s → … → 30s max
   state.wsReconnectDelay = Math.min(state.wsReconnectDelay * 2, 30000);
   log("info", "Signaling", `WS reconnect scheduled in ${delay}ms`);
   state.wsReconnectTimer = setTimeout(() => {
@@ -594,13 +801,9 @@ function scheduleWsReconnect() {
   }, delay);
 }
 
-/**
- * Open (or reopen) the signaling WebSocket.
- * When isReconnect=true and a session is live, we silently re-attach
- * without ending the session.
- */
 function openSocket(isReconnect = false) {
   return new Promise((resolve) => {
+    stopWsReconnect();
     if (state.ws) {
       try {
         state.ws._desklyManaged = true;
@@ -617,25 +820,35 @@ function openSocket(isReconnect = false) {
     state.ws = ws;
 
     ws.onopen = () => {
-      state.wsReconnectDelay = 1000; // reset back-off on success
-      log("info", "Signaling", `WebSocket connected as ${state.role}`);
+      state.wsReconnectDelay = 1000;
+      log("info", "Signaling", `WebSocket connected successfully`);
+      if (state.wsPingTimer) clearInterval(state.wsPingTimer);
+      state.wsPingTimer = setInterval(() => {
+        if (state.ws && state.ws.readyState === 1) {
+          sendWs({ type: "ping" });
+        }
+      }, 5000);
+      refreshPresence().catch(() => {});
       if (isReconnect && state.wsInSession) {
-        setStatus(state.role === "host" ? "Host online" : "Connected (60 FPS)");
+        setStatus(state.isHosting ? "Host online" : "Connected (60 FPS)");
         setSessionFeedback("🔄 Signaling reconnected");
       } else {
-        setStatus(state.role === "host" ? "Host online" : "Controller online");
+        setStatus("Deskly Online — Ready to connect or host");
       }
       resolve();
     };
 
     ws.onclose = (ev) => {
-      if (ws._desklyManaged) return; // intentionally closed — skip
+      if (state.wsPingTimer) {
+        clearInterval(state.wsPingTimer);
+        state.wsPingTimer = null;
+      }
+      if (ws._desklyManaged) return;
       log("warn", "Signaling", `WS closed (code=${ev.code})`);
       if (state.wsInSession) {
-        // Session is live — keep it alive, reconnect silently
         setSessionFeedback("⚠️ Signaling dropped — reconnecting…");
       } else {
-        setStatus("Signaling disconnected");
+        setStatus("Signaling disconnected — reconnecting…");
       }
       scheduleWsReconnect();
     };
@@ -655,11 +868,33 @@ function sendWs(msg) {
 }
 
 async function onSignal(msg) {
-  if (msg.type === "start-session" && state.role === "host") {
-    log("info", "Signaling", "Host received start-session command", msg.settings);
-    state.settings = { ...state.settings, ...msg.settings };
+  if (msg.type === "presence" || msg.type === "presence-snapshot") {
+    if (msg.publicId) {
+      const cleanId = String(msg.publicId).replace(/\D/g, "");
+      state.presenceMap.set(cleanId, !!msg.online);
+    }
+    for (const d of (msg.devices || [])) {
+      if (d.publicId) {
+        const cleanId = String(d.publicId).replace(/\D/g, "");
+        state.presenceMap.set(cleanId, !!d.online);
+      }
+    }
+    for (const pubId of (msg.publicIds || [])) {
+      const cleanId = String(pubId).replace(/\D/g, "");
+      state.presenceMap.set(cleanId, !!msg.online);
+    }
+    renderRecentDevices();
+    updateTargetOnlineStatus();
+  }
+
+  if (msg.type === "start-session") {
+    log("info", "Signaling", "Received incoming session request — acting as Host", msg);
+    state.isHosting = true;
+    state.connectedCallerUsername = msg.caller?.username || "Controller";
+    state.settings = { ...state.settings, ...(msg.settings || {}) };
     await startHostSession();
   }
+
   if (msg.type === "connect-result") {
     if (!msg.ok) {
       log("warn", "Signaling", `Connect failed: ${msg.error}`);
@@ -670,28 +905,40 @@ async function onSignal(msg) {
       applyRoleUi();
     } else {
       log("info", "Signaling", "Connect result OK from host", msg.device);
+      state.connectedHostUsername = msg.device?.username || "";
       rememberConnectedDevice($("connect-id").value, $("connect-pass").value, msg.device?.username);
-      const hostDisplay = msg.device?.username || displayId($("connect-id").value);
+      const hostDisplay = state.connectedHostUsername ? `@${state.connectedHostUsername}` : displayId($("connect-id").value);
       $("session-label").textContent = `Host: ${hostDisplay}`;
       setStatus("Connecting…");
       setSessionFeedback("");
     }
   }
+
   if (msg.type === "signal") {
-    await handleRtc(msg.data);
+    if (msg.data?.kind === "input-feedback") {
+      applySharedInputPause(msg.data.paused, msg.data.source || "remote");
+    } else {
+      await handleRtc(msg.data);
+    }
   }
+
+  if (msg.type === "force-stop") {
+    const text = msg.message || "Application forcefully stopped";
+    log("warn", "Signaling", `Host forcefully stopped session: ${text}`);
+    endSession(`⚠️ ${text}`);
+    setSessionFeedback(`⚠️ ${text}`, 8000);
+    return;
+  }
+
   if (msg.type === "hangup") {
-    // Explicit peer hangup — always end session
     log("info", "Signaling", "Peer sent explicit hangup — ending session");
     endSession("Peer disconnected");
   }
+
   if (msg.type === "peer-gone") {
-    // Peer's WebSocket dropped — P2P may still be alive.
-    // Wait for WebRTC to confirm before tearing down.
-    log("warn", "Signaling", `Peer WS dropped (role=${msg.role}) — watching WebRTC state`);
+    log("warn", "Signaling", `Peer WS dropped — watching WebRTC state`);
     if (state.wsInSession) {
       setSessionFeedback("⚠️ Peer signal dropped — checking connection…");
-      // Give WebRTC 15s to stay connected before ending
       scheduleIceRecoveryTimeout(15000);
     }
   }
@@ -710,8 +957,7 @@ function scheduleIceRecoveryTimeout(ms) {
       setSessionFeedback("✅ Connection stable");
       return;
     }
-    // Try ICE restart from the offer side (host)
-    if (state.role === "host" && state.pc && state.ws?.readyState === 1) {
+    if (state.isHosting && state.pc && state.ws?.readyState === 1) {
       log("info", "WebRTC", "Attempting ICE restart");
       try {
         const offer = await state.pc.createOffer({ iceRestart: true });
@@ -724,7 +970,6 @@ function scheduleIceRecoveryTimeout(ms) {
         log("warn", "WebRTC", `ICE restart failed: ${err.message}`);
       }
     }
-    // Give up — WebRTC is truly dead
     if (state.wsInSession) {
       log("info", "Session", "WebRTC did not recover — ending session");
       endSession("Connection lost");
@@ -742,12 +987,13 @@ function clearIceRecoveryTimer() {
 async function rememberConnectedDevice(id, password, username) {
   const publicId = String(id || "").replace(/\D/g, "");
   if (!/^\d{9}$/.test(publicId) || !password) return;
-  await window.deskly.saveAccess({ publicId, password, username: username || "Unknown device" });
+  const cleanUsername = username || "Unknown device";
+  await window.deskly.saveAccess({ publicId, password, username: cleanUsername });
   state.savedAccess = await window.deskly.accessList();
 
   const others = (state.settings.recentDevices || []).filter((item) => item.publicId !== publicId);
   state.settings.recentDevices = [
-    { publicId, username: username || "Unknown device", accessPassword: password, lastConnectedAt: new Date().toISOString() },
+    { publicId, username: cleanUsername, accessPassword: password, lastConnectedAt: new Date().toISOString() },
     ...others,
   ].slice(0, 16);
 
@@ -762,16 +1008,16 @@ async function rememberConnectedDevice(id, password, username) {
 
 async function connectToHost(id, password) {
   $("connect-error").textContent = "";
-  const hostId = String(id || "").replace(/\D/g, "");
+  const targetId = String(id || "").replace(/\D/g, "");
   const pass = String(password || "");
-  if (!hostId || !pass) {
-    $("connect-error").textContent = "Please enter Host ID and access password.";
+  if (!targetId || !pass) {
+    $("connect-error").textContent = "Please enter Remote Device ID and access password.";
     return;
   }
-  log("info", "Controller", `Initiating connection to Host ${hostId}`);
-  if (state.role !== "controller") await setRole("controller");
+  log("info", "Controller", `Initiating connection to Device ${targetId}`);
+  state.isHosting = false;
   await prepareControllerPeer();
-  sendWs({ type: "connect", hostId, password: pass });
+  sendWs({ type: "connect", hostId: targetId, password: pass });
 }
 
 $("btn-connect").onclick = () => connectToHost($("connect-id").value, $("connect-pass").value);
@@ -792,6 +1038,7 @@ function bitrate() {
 async function startHostSession() {
   const t0 = Date.now();
   log("info", "WebRTC", "Host preparing peer connection");
+  state.isHosting = true;
   cleanupPeer();
   const pc = new RTCPeerConnection(ICE);
   state.pc = pc;
@@ -805,8 +1052,9 @@ async function startHostSession() {
       if (hostDisconnectedTimer) { clearTimeout(hostDisconnectedTimer); hostDisconnectedTimer = null; }
       clearIceRecoveryTimer();
       setStatus("Hosting (connected)");
+      const callerDisplay = state.connectedCallerUsername ? `@${state.connectedCallerUsername}` : "Controller";
+      $("session-label").textContent = `Hosting (connected to ${callerDisplay})`;
     } else if (cs === "disconnected") {
-      // Debounce transient ~5s STUN re-evaluation so UI doesn't flicker
       if (!hostDisconnectedTimer) {
         hostDisconnectedTimer = setTimeout(() => {
           if (pc.connectionState === "disconnected") {
@@ -845,7 +1093,8 @@ async function startHostSession() {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     sendWs({ type: "signal", data: { kind: "offer", sdp: offer } });
-    enterSession("Hosting — screen shared");
+    const callerDisplay = state.connectedCallerUsername ? `@${state.connectedCallerUsername}` : "";
+    enterSession(callerDisplay ? `Hosting (${callerDisplay})` : "Hosting — screen shared");
     window.deskly.startCursorLoop();
   } catch (err) {
     log("error", "WebRTC", `Failed to start host screen sharing: ${err.message}`);
@@ -855,6 +1104,7 @@ async function startHostSession() {
 
 async function prepareControllerPeer() {
   log("info", "WebRTC", "Controller preparing peer connection");
+  state.isHosting = false;
   cleanupPeer();
   const pc = new RTCPeerConnection(ICE);
   state.pc = pc;
@@ -869,11 +1119,12 @@ async function prepareControllerPeer() {
       clearIceRecoveryTimer();
       setStatus("Connected (60 FPS)");
       setSessionFeedback("");
-      const hostId = $("connect-id")?.value;
-      if (hostId) $("session-label").textContent = `Host: ${displayId(hostId)}`;
+      const hostDisplay = state.connectedHostUsername
+        ? `@${state.connectedHostUsername}`
+        : ($("connect-id")?.value ? displayId($("connect-id").value) : "");
+      if (hostDisplay) $("session-label").textContent = `Host: ${hostDisplay}`;
       refreshWindowBounds();
     } else if (cs === "disconnected") {
-      // Debounce transient STUN re-evaluation so UI doesn't flash needlessly
       if (!ctrlDisconnectedTimer) {
         ctrlDisconnectedTimer = setTimeout(() => {
           if (pc.connectionState === "disconnected") {
@@ -903,14 +1154,14 @@ async function prepareControllerPeer() {
     if (e.receiver && "playoutDelayHint" in e.receiver) {
       try {
         e.receiver.playoutDelayHint = 0;
-        log("info", "WebRTC", "Enabled receiver.playoutDelayHint = 0 (zero jitter buffer delay)");
       } catch { /* ignore */ }
     }
   };
   pc.onicecandidate = (e) => {
     if (e.candidate) sendWs({ type: "signal", data: { kind: "ice", candidate: e.candidate } });
   };
-  enterSession("Connecting…");
+  const hostDisplay = state.connectedHostUsername ? `@${state.connectedHostUsername}` : "Connecting…";
+  enterSession(`Host: ${hostDisplay}`);
 }
 
 async function drainIceQueue() {
@@ -958,13 +1209,14 @@ function bindDataChannel(dc) {
   dc.onopen = () => {
     log("info", "DataChannel", "WebRTC DataChannel opened");
     setStatus("P2P connected");
+    triggerLedBlink("connect");
     applyBitrate();
     window.deskly.startCursorLoop();
-    if (state.role === "controller") {
-      // Only the Host may lock or unlock remote input.
+    if (!state.isHosting) {
       state.inputArmed = true;
       setSessionFeedback("Input ready — Host controls access.");
-    } else if (state.role === "host") {
+    } else {
+      dcSend({ t: "input-feedback", paused: state.remoteInputPaused });
       window.deskly.cursor().then((norm) => {
         if (norm && Number.isFinite(norm.x) && Number.isFinite(norm.y)) {
           dcSend({ t: "host-cursor", x: norm.x, y: norm.y });
@@ -1006,8 +1258,6 @@ function dcSend(obj) {
 }
 
 function dcSendCursor(obj) {
-  // Mouse input must use the reliable main channel. The realtime channel is
-  // intentionally lossy and could drop the first movement after connecting.
   if (obj.t === "in" && state.dc && state.dc.readyState === "open") {
     state.dc.send(JSON.stringify(obj));
   } else if (state.cursorDc && state.cursorDc.readyState === "open") {
@@ -1018,12 +1268,38 @@ function dcSendCursor(obj) {
 }
 
 async function onControlMessage(msg) {
-  if (state.role === "host") {
-    if (msg.t === "in" && !state.remoteInputPaused) {
+  // Pause state is shared: either side can pause or resume the session.
+  // Handle it before the host's blocked-input guard so a resume always works.
+  if (msg.t === "input-feedback") {
+    applySharedInputPause(msg.paused, msg.source || "remote");
+    return;
+  }
+
+  if (msg.t === "force-stop") {
+    const text = msg.message || "Application forcefully stopped";
+    log("warn", "DataChannel", `Host forcefully stopped session: ${text}`);
+    endSession(`⚠️ ${text}`);
+    setSessionFeedback(`⚠️ ${text}`, 8000);
+    return;
+  }
+
+  if (state.isHosting) {
+    if (state.remoteInputPaused) {
+      // Host paused/blocked remote controller: strictly discard all input and cursor movements
+      if (msg.t === "settings") {
+        state.settings = { ...state.settings, ...msg.settings };
+        syncSessionUi();
+      } else if (msg.t === "in" || msg.t === "cursor") {
+        // Echo blocked state back to ensure controller stays locked
+        dcSend({ t: "input-feedback", paused: true });
+      }
+      return;
+    }
+    if (msg.t === "in") {
       state.lastRemoteInputAt = Date.now();
       window.deskly.inject(msg.e, { blockWinKey: state.settings.blockWinKey !== false });
     }
-    if (msg.t === "cursor" && state.settings.mouseFollow && !state.remoteInputPaused) {
+    if (msg.t === "cursor" && state.settings.mouseFollow) {
       if (Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
         state.lastRemoteInputAt = Date.now();
         window.deskly.followCursor({ x: msg.x, y: msg.y });
@@ -1048,11 +1324,10 @@ async function onControlMessage(msg) {
     }
   }
 
-  if (state.role === "controller") {
+  if (!state.isHosting) {
     if (msg.t === "host-cursor" && Number.isFinite(msg.x) && Number.isFinite(msg.y)) {
       state.hostCursor = { x: msg.x, y: msg.y };
-
-      if (state.settings.mouseFollow && !state.remoteInputPaused) {
+      if (state.settings.mouseFollow && !state.remoteInputPaused && state.inputArmed) {
         state.suppressSendMouseMoveUntil = Date.now() + 35;
         const g = getGeometry();
         const clientX = g.videoLeft + msg.x * g.videoWidth;
@@ -1071,14 +1346,6 @@ async function onControlMessage(msg) {
         }
       }
     }
-    if (msg.t === "input-feedback") {
-      const wasBlocked = state.remoteInputPaused;
-      state.remoteInputPaused = !!msg.paused;
-      updateInputPill();
-      if (wasBlocked !== state.remoteInputPaused) {
-        setSessionFeedback(msg.paused ? "⛔ Host blocked your input" : "✅ Host allowed your input");
-      }
-    }
     if (msg.t === "settings") {
       state.settings = { ...state.settings, ...msg.settings };
       syncSessionUi();
@@ -1087,7 +1354,7 @@ async function onControlMessage(msg) {
 }
 
 window.deskly.onLocalCursor((pos) => {
-  if (state.role === "host") {
+  if (state.isHosting) {
     if (Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
       dcSendCursor({ t: "host-cursor", x: pos.x, y: pos.y });
       if (state.settings.mouseFollow) {
@@ -1105,7 +1372,7 @@ function enterSession(label) {
   syncSessionUi();
   setScreenFit(state.screenFit);
   updateScreenSizeButtons();
-  if (state.role !== "controller") {
+  if (state.isHosting) {
     $("cursor-host")?.classList.add("hidden");
   }
 }
@@ -1136,12 +1403,12 @@ async function setScreenResolution(size) {
   updateScreenSizeButtons();
   log("info", "Screen", `Resolution set to ${size}`);
 
-  if (state.role === "controller") {
+  if (!state.isHosting) {
     dcSend({ t: "screen-size", size });
     setSessionFeedback(`Resolution set to ${size.toUpperCase()}`);
   }
 
-  if (state.role === "host" && state.hostVideoTrack) {
+  if (state.isHosting && state.hostVideoTrack) {
     try {
       await state.hostVideoTrack.applyConstraints(qualityConstraints(size));
       log("info", "Screen", `Host applied constraints for ${size}`);
@@ -1196,9 +1463,11 @@ $("session-follow-toggle").onchange = () => setMouseFollow($("session-follow-tog
 function endSession(reason) {
   log("info", "Session", `Ending session: ${reason}`);
   state.wsInSession = false;
+  state.isHosting = false;
   clearIceRecoveryTimer();
   cleanupPeer();
   window.deskly.stopCursorLoop();
+  if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
   video.srcObject = null;
   $("cursor-host")?.classList.add("hidden");
   state.hostCursor = null;
@@ -1222,56 +1491,206 @@ function cleanupPeer() {
 
 function updateInputPill() {
   const el = $("input-state");
-  if (!el) return;
-  if (state.role === "host") {
-    el.textContent = state.remoteInputPaused ? "Remote BLOCKED" : "Remote ON";
-    el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
-    el.title = state.remoteInputPaused
-      ? "Remote controller input is blocked. Click or press :qe to resume."
-      : "Remote controller input is active. Click or press :qw to pause.";
-    el.style.cursor = "pointer";
+  const btn = $("btn-toggle-input");
+
+  if (state.isHosting) {
+    if (el) {
+      el.textContent = state.remoteInputPaused ? "Remote BLOCKED" : "Remote ON";
+      el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
+      el.title = "Host remote input status. Click to toggle.";
+    }
+    if (btn) {
+      btn.disabled = false;
+      if (state.remoteInputPaused) {
+        btn.textContent = "Allow Remote";
+        btn.className = "input-ctrl-btn btn-resume";
+        btn.title = "Allow remote controller input (Ctrl+Alt+E)";
+      } else {
+        btn.textContent = "Block Remote";
+        btn.className = "input-ctrl-btn btn-pause";
+        btn.title = "Block remote controller input (Ctrl+Alt+Q)";
+      }
+    }
   } else {
-    el.textContent = state.remoteInputPaused ? "Host BLOCKED" : "Input ON";
-    el.className = "pill " + (state.remoteInputPaused ? "off" : "on");
-    el.title = state.remoteInputPaused ? "Host has blocked remote input" : "Remote input active";
-    el.style.cursor = "default";
+    if (state.remoteInputPaused) {
+      if (el) {
+        el.textContent = "Input PAUSED";
+        el.className = "pill off";
+        el.title = "Remote input is paused. Click to resume.";
+      }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Start Input";
+        btn.className = "input-ctrl-btn btn-resume";
+        btn.title = "Resume remote input";
+      }
+    } else {
+      if (el) {
+        el.textContent = state.inputArmed ? "Input ON" : "Input PAUSED";
+        el.className = "pill " + (state.inputArmed ? "on" : "off");
+        el.title = "Controller input state. Click to toggle.";
+      }
+      if (btn) {
+        btn.disabled = false;
+        if (state.inputArmed) {
+          btn.textContent = "Pause Input";
+          btn.className = "input-ctrl-btn btn-pause";
+          btn.title = "Pause sending keyboard & mouse input";
+        } else {
+          btn.textContent = "Start Input";
+          btn.className = "input-ctrl-btn btn-resume";
+          btn.title = "Start sending keyboard & mouse input";
+        }
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INPUT CONTROL & SHORTCUTS (Host & Controller)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function sendSharedInputPause(paused, source) {
+  const message = { t: "input-feedback", paused: !!paused, source };
+  dcSend(message);
+  dcSendCursor(message);
+  sendWs({ type: "signal", data: { kind: "input-feedback", paused: !!paused, source } });
+}
+
+function applySharedInputPause(paused, source = "remote") {
+  const nextPaused = !!paused;
+  const changed = state.remoteInputPaused !== nextPaused || (!state.isHosting && state.inputArmed === nextPaused);
+  state.remoteInputPaused = nextPaused;
+
+  // On the controller, the shared state also controls whether input events
+  // leave this device. On the host it controls whether incoming events apply.
+  if (!state.isHosting) state.inputArmed = !nextPaused;
+  if (nextPaused && state.isHosting && window.deskly?.releaseAllKeys) {
+    window.deskly.releaseAllKeys();
+  }
+
+  updateInputPill();
+  if (changed) {
+    const actor = source === "host" ? "Host" : source === "controller" ? "Controller" : "remote device";
+    log("info", "Input", `Shared input ${nextPaused ? "paused" : "resumed"} by ${actor}`);
+    setSessionFeedback(nextPaused ? `⛔ Remote input PAUSED by ${actor}` : `✅ Remote input RESUMED by ${actor}`);
+    triggerLedBlink(nextPaused ? "pause" : "resume");
   }
 }
 
 function hostPauseRemoteInput() {
-  if (state.role !== "host") return;
-  if (state.remoteInputPaused) return;
+  if (state.remoteInputPaused) {
+    log("info", "Shortcut", "Pause ignored: remote input is already blocked");
+    return;
+  }
   state.remoteInputPaused = true;
-  log("info", "Host", "Host blocked remote input via :qw");
-  dcSend({ t: "input-feedback", paused: true });
+  log("info", "Host", "Host blocked remote input");
+  if (window.deskly?.releaseAllKeys) window.deskly.releaseAllKeys();
+  sendSharedInputPause(true, "host");
   updateInputPill();
-  setSessionFeedback("⛔ Remote input BLOCKED (:qw)");
-  window.deskly?.setRemoteInputPausedState?.(true);
-  window.deskly?.releaseModifiers?.();
+  setSessionFeedback("⛔ Remote input BLOCKED (Ctrl+Alt+E to allow)");
+  triggerLedBlink("pause");
 }
 
 function hostResumeRemoteInput() {
-  if (state.role !== "host") return;
-  if (!state.remoteInputPaused) return;
+  if (!state.remoteInputPaused) {
+    log("info", "Shortcut", "Resume ignored: remote input is already allowed");
+    return;
+  }
   state.remoteInputPaused = false;
-  log("info", "Host", "Host resumed remote input via :qe");
-  dcSend({ t: "input-feedback", paused: false });
+  log("info", "Host", "Host resumed remote input");
+  sendSharedInputPause(false, "host");
   updateInputPill();
-  setSessionFeedback("✅ Remote input RESUMED (:qe)");
-  window.deskly?.setRemoteInputPausedState?.(false);
+  setSessionFeedback("✅ Remote input ALLOWED (Ctrl+Alt+Q to block)");
+  triggerLedBlink("resume");
 }
 
-$("input-state").onclick = () => {
-  if (state.role === "host") {
-    if (state.remoteInputPaused) hostResumeRemoteInput();
-    else hostPauseRemoteInput();
+function controllerPauseInput() {
+  state.inputArmed = false;
+  state.remoteInputPaused = true;
+  log("info", "Controller", "Controller paused sending input");
+  // Release any active modifier keys so host does not keep them stuck down
+  dcSend({ t: "in", e: { kind: "key", code: "ControlLeft", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "ControlRight", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "AltLeft", down: false } });
+  dcSend({ t: "in", e: { kind: "key", code: "AltRight", down: false } });
+  sendSharedInputPause(true, "controller");
+  updateInputPill();
+  setSessionFeedback("Input PAUSED");
+  triggerLedBlink("pause");
+}
+
+function controllerResumeInput() {
+  state.inputArmed = true;
+  state.remoteInputPaused = false;
+  log("info", "Controller", "Controller resumed sending input");
+  sendSharedInputPause(false, "controller");
+  updateInputPill();
+  setSessionFeedback("Input ON");
+  triggerLedBlink("resume");
+}
+
+// Controller GUI buttons to start & pause input
+const btnToggleInput = $("btn-toggle-input");
+if (btnToggleInput) {
+  btnToggleInput.onclick = () => {
+    if (state.isHosting) {
+      if (state.remoteInputPaused) hostResumeRemoteInput();
+      else hostPauseRemoteInput();
+    } else {
+      if (state.inputArmed) controllerPauseInput();
+      else controllerResumeInput();
+    }
+  };
+}
+
+const inputStatePill = $("input-state");
+if (inputStatePill) {
+  inputStatePill.onclick = () => {
+    if (state.isHosting) {
+      if (state.remoteInputPaused) hostResumeRemoteInput();
+      else hostPauseRemoteInput();
+    } else {
+      if (state.inputArmed) controllerPauseInput();
+      else controllerResumeInput();
+    }
+  };
+}
+
+let isTerminatingHost = false;
+async function handleHostForceStop() {
+  if (isTerminatingHost) return;
+  isTerminatingHost = true;
+  log("info", "Host", "Emergency termination initiated (Ctrl+Alt+;) — sending force-stop notification to controller");
+  try {
+    dcSend({ t: "force-stop", message: "Application forcefully stopped" });
+  } catch {}
+  try {
+    sendWs({ type: "force-stop", message: "Application forcefully stopped" });
+  } catch {}
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  if (window.deskly?.terminateApp) {
+    window.deskly.terminateApp();
   }
-};
+}
 
 window.deskly.onHotkey((name) => {
-  if (state.role === "host") {
-    if (name === "pause") hostPauseRemoteInput();
-    if (name === "resume") hostResumeRemoteInput();
+  // Global shortcuts fire on every machine. Only the host responds; the
+  // controller uses the toolbar button.
+  log("info", "Shortcut", `Received ${name} shortcut`, {
+    role: state.role,
+    isHosting: state.isHosting,
+    inSession: state.wsInSession,
+  });
+  if (!state.isHosting && state.role !== "host") {
+    log("warn", "Shortcut", `${name} ignored: this Deskly instance is not the active host`);
+    return;
+  }
+  if (name === "pause") hostPauseRemoteInput();
+  if (name === "resume") hostResumeRemoteInput();
+  if (name === "terminate") {
+    log("info", "Host", "Host termination shortcut triggered");
+    handleHostForceStop();
   }
 });
 
@@ -1338,10 +1757,6 @@ function videoNorm(ev) {
   };
 }
 
-function renderHostCursor(_x, _y) {
-  // Blue dot overlay removed completely. Host cursor is naturally displayed in video feed.
-}
-
 let cachedWindowBounds = null;
 async function refreshWindowBounds() {
   if (window.deskly?.getWindowBounds) {
@@ -1361,38 +1776,32 @@ video.addEventListener("resize", updateCursorPositions);
 let lastSentMouseAt = 0;
 
 video.addEventListener("mousemove", (ev) => {
-  if (state.role !== "controller") return;
+  if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
   if (Date.now() < state.suppressSendMouseMoveUntil) return;
 
   const p = videoNorm(ev);
-
-  if (state.inputArmed && !state.remoteInputPaused) {
-    const now = performance.now();
-    // 120 Hz rate limiter (~8ms between sends) for instantaneous cursor response without frame lag
-    if (now - lastSentMouseAt >= 7) {
-      lastSentMouseAt = now;
-      dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
-    }
-  } else if (state.settings.mouseFollow) {
-    dcSendCursor({ t: "cursor", x: p.x, y: p.y });
+  const now = performance.now();
+  if (now - lastSentMouseAt >= 7) {
+    lastSentMouseAt = now;
+    dcSendCursor({ t: "in", e: { kind: "mouse-move", x: p.x, y: p.y } });
   }
 });
 
 video.addEventListener("mousedown", (ev) => {
-  if (state.role !== "controller" || !state.inputArmed || state.remoteInputPaused) return;
+  if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
   ev.preventDefault();
   const p = videoNorm(ev);
   dcSend({ t: "in", e: { kind: "mouse-button", button: ev.button, down: true, x: p.x, y: p.y } });
 });
 
 video.addEventListener("mouseup", (ev) => {
-  if (state.role !== "controller" || !state.inputArmed || state.remoteInputPaused) return;
+  if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
   const p = videoNorm(ev);
   dcSend({ t: "in", e: { kind: "mouse-button", button: ev.button, down: false, x: p.x, y: p.y } });
 });
 
 video.addEventListener("wheel", (ev) => {
-  if (state.role !== "controller" || !state.inputArmed || state.remoteInputPaused) return;
+  if (state.isHosting || !state.inputArmed || state.remoteInputPaused) return;
   dcSend({ t: "in", e: { kind: "wheel", deltaY: Math.sign(ev.deltaY) } });
 });
 
@@ -1400,82 +1809,40 @@ video.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
 const WIN_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 
-function localCommand(token) {
-  if (state.role !== "host") return false;
-  const t = String(token || "").toLowerCase().trim();
-  if (t === "qw") {
-    hostPauseRemoteInput();
-    return true;
-  }
-  if (t === "qe") {
-    hostResumeRemoteInput();
-    return true;
-  }
-  return false;
-}
-
 window.addEventListener("keydown", (ev) => {
-  const target = ev.target;
-  const isInputFocused = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
-
-  // ONLY HOST can trigger :qw / :qe command sequence.
-  // Only intercept keys when actively composing a command (state.cmd is non-empty)
-  // OR when ':' is pressed outside an input to start one.
-  if (state.role === "host") {
-    if (!isInputFocused && state.cmd.length > 0) {
-      // We are mid-command — intercept everything until resolved or cleared
+  // Host-only hotkeys Ctrl+Alt+Q (block remote) / Ctrl+Alt+E (allow remote) / Ctrl+Alt+; (terminate host)
+  if ((state.isHosting || state.role === "host") && ev.ctrlKey && ev.altKey) {
+    if (ev.code === "KeyQ") {
       ev.preventDefault();
-      ev.stopPropagation();
-      if (ev.key === "Escape") {
-        state.cmd = "";
-      } else if (ev.key === "Enter") {
-        localCommand(state.cmd.slice(1));
-        state.cmd = "";
-      } else if (ev.key === "Backspace") {
-        state.cmd = state.cmd.slice(0, -1);
-      } else if (ev.key.length === 1) {
-        state.cmd += ev.key;
-        const lower = state.cmd.toLowerCase();
-        if (lower === ":qw" || lower === ":qe") {
-          localCommand(state.cmd.slice(1));
-          state.cmd = "";
-        }
-      }
-      $("local-cmd")?.classList.toggle("hidden", !state.cmd);
-      const cmdText = $("local-cmd-text");
-      if (cmdText) cmdText.textContent = state.cmd.slice(1);
+      log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+Q");
+      hostPauseRemoteInput();
       return;
     }
-
-    // Start command mode when ':' is pressed outside an input
-    if (!isInputFocused && ev.key === ":") {
+    if (ev.code === "KeyE") {
       ev.preventDefault();
-      ev.stopPropagation();
-      state.cmd = ":";
-      $("local-cmd")?.classList.remove("hidden");
-      const cmdText = $("local-cmd-text");
-      if (cmdText) cmdText.textContent = "";
+      log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+E");
+      hostResumeRemoteInput();
       return;
     }
-
-    // Host does not forward any other keys — just don't touch them
-    return;
+    if (ev.code === "Semicolon" || ev.key === ";") {
+      ev.preventDefault();
+      log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+;");
+      handleHostForceStop();
+      return;
+    }
   }
 
-  // CONTROLLER handling: controller NEVER controls pause/resume, input is blocked if host paused it
-  if (state.role !== "controller") return;
-  if (state.remoteInputPaused) return;
+  if (state.isHosting) return;
   if (WIN_CODES.has(ev.code) || ev.key === "Meta") { ev.preventDefault(); return; }
-  if (!state.inputArmed) return;
+  if (!state.inputArmed || state.remoteInputPaused) return;
   if (ev.repeat) return;
   dcSend({ t: "in", e: { kind: "key", code: ev.code, down: true } });
 });
 
 window.addEventListener("keyup", (ev) => {
-  if (state.role !== "controller") return;
-  if (state.remoteInputPaused) return;
+  if (state.isHosting) return;
   if (WIN_CODES.has(ev.code) || ev.key === "Meta") { ev.preventDefault(); return; }
-  if (!state.inputArmed) return;
+  if (!state.inputArmed || state.remoteInputPaused) return;
   dcSend({ t: "in", e: { kind: "key", code: ev.code, down: false } });
 });
 
@@ -1527,6 +1894,21 @@ $("btn-settings-open-file").onclick = async () => {
 $("modal-logs").addEventListener("click", (e) => {
   if (e.target === $("modal-logs")) closeLogsModal();
 });
+
+// Presence auto-refresh when on Home view
+setInterval(async () => {
+  if (state.token && !state.wsInSession) {
+    try {
+      const me = await api("/api/me");
+      if (me?.settings?.recentDevices) {
+        state.settings.recentDevices = me.settings.recentDevices;
+        renderRecentDevices();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}, 8000);
 
 // Keep WS alive through proxies/NAT with a heartbeat ping every 15s
 setInterval(() => sendWs({ type: "ping" }), 15000);
