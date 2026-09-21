@@ -7,5 +7,6 @@ out/
 Thumbs.db
 desktop/release/
 desktop/release-final/
+desktop/release-mcaffe/
 
 .env.example
