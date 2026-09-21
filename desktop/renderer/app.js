@@ -226,6 +226,25 @@ function paintHome() {
   if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
   if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
   renderRecentDevices();
+  refreshPresence().catch(() => {});
+}
+
+async function refreshPresence() {
+  if (!state.token) return;
+  try {
+    const res = await api("/api/presence");
+    if (res && Array.isArray(res.devices)) {
+      for (const d of res.devices) {
+        if (d.publicId) {
+          const cleanId = String(d.publicId).replace(/\D/g, "");
+          state.presenceMap.set(cleanId, !!d.online);
+        }
+      }
+      renderRecentDevices();
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 function renderRecentDevices() {
@@ -768,6 +787,16 @@ async function onSignal(msg) {
     for (const pubId of (msg.publicIds || [])) {
       const cleanId = String(pubId).replace(/\D/g, "");
       state.presenceMap.set(cleanId, !!msg.online);
+    }
+    renderRecentDevices();
+  }
+
+  if (msg.type === "presence-snapshot") {
+    for (const d of (msg.devices || [])) {
+      if (d.publicId) {
+        const cleanId = String(d.publicId).replace(/\D/g, "");
+        state.presenceMap.set(cleanId, !!d.online);
+      }
     }
     renderRecentDevices();
   }

@@ -122,6 +122,15 @@ export function attachSignaling(app) {
 
     await updateDevicePresence(user.sub);
     send(socket, { type: "hello", role });
+    try {
+      const onlineDevs = await Device.find({ online: true }).select("publicId role online");
+      send(socket, {
+        type: "presence-snapshot",
+        devices: onlineDevs.map((d) => ({ publicId: d.publicId, role: d.role, online: true })),
+      });
+    } catch {
+      /* ignore */
+    }
 
     socket.on("message", async (raw) => {
       let msg;

@@ -209,6 +209,13 @@ export async function registerRoutes(app) {
     }
   });
 
+  app.get("/api/presence", { preHandler: requireAuth }, async () => {
+    const onlineDevs = await Device.find({ online: true }).select("publicId role online");
+    return {
+      devices: onlineDevs.map((d) => ({ publicId: d.publicId, role: d.role, online: true })),
+    };
+  });
+
   app.patch("/api/settings", { preHandler: requireAuth }, async (request, reply) => {
     try {
       const patch = request.body || {};
