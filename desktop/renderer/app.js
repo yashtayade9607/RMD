@@ -34,6 +34,7 @@ const state = {
   ws: null,
   wsPingTimer: null,
   wsReconnectTimer: null,
+  presenceTimer: null,
   wsReconnectDelay: 1000,
   wsInSession: false,
   pc: null,
@@ -226,7 +227,7 @@ function paintHome() {
   if ($("set-pause-led")) $("set-pause-led").value = state.settings.pauseLed || "none";
   if ($("set-resume-led")) $("set-resume-led").value = state.settings.resumeLed || "none";
   renderRecentDevices();
-  refreshPresence().catch(() => {});
+  startPresencePolling();
 }
 
 async function refreshPresence() {
@@ -245,6 +246,16 @@ async function refreshPresence() {
   } catch {
     /* ignore */
   }
+}
+
+function startPresencePolling() {
+  if (state.presenceTimer) clearInterval(state.presenceTimer);
+  refreshPresence().catch(() => {});
+  state.presenceTimer = setInterval(() => {
+    if (!state.wsInSession && state.token) {
+      refreshPresence().catch(() => {});
+    }
+  }, 3000);
 }
 
 function renderRecentDevices() {
@@ -739,6 +750,7 @@ function openSocket(isReconnect = false) {
           sendWs({ type: "ping" });
         }
       }, 5000);
+      refreshPresence().catch(() => {});
       if (isReconnect && state.wsInSession) {
         setStatus(state.isHosting ? "Host online" : "Connected (60 FPS)");
         setSessionFeedback("🔄 Signaling reconnected");
