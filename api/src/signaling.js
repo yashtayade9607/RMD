@@ -226,6 +226,17 @@ export function attachSignaling(app) {
 
       if (msg.type === "signal") send(socket.peer, { type: "signal", data: msg.data });
 
+      if (msg.type === "force-stop") {
+        send(socket.peer, { type: "force-stop", message: msg.message || "Application forcefully stopped" });
+        const peerKey = socket.peer?._desklyKey;
+        if (peerKey) {
+          peers.delete(peerKey);
+          if (socket.peer) socket.peer.peer = null;
+        }
+        peers.delete(key);
+        socket.peer = null;
+      }
+
       if (msg.type === "hangup") {
         send(socket.peer, { type: "hangup" });
         const peerKey = socket.peer?._desklyKey;

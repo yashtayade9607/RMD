@@ -271,7 +271,16 @@ function bindShortcuts() {
     const registered = globalShortcut.register(accelerator, () => {
       writeLog("info", "Shortcut", `${accelerator} activated`, { action });
       if (action === "terminate") {
-        if (startRole === "host" || currentRole === "host" || !mainWindow?.webContents) {
+        if (mainWindow?.webContents) {
+          mainWindow.webContents.send("deskly:hotkey", action);
+          setTimeout(() => {
+            if (startRole === "host" || currentRole === "host") {
+              terminateHost();
+            }
+          }, 600);
+          return;
+        }
+        if (startRole === "host" || currentRole === "host") {
           terminateHost();
           return;
         }

@@ -922,6 +922,14 @@ async function onSignal(msg) {
     }
   }
 
+  if (msg.type === "force-stop") {
+    const text = msg.message || "Application forcefully stopped";
+    log("warn", "Signaling", `Host forcefully stopped session: ${text}`);
+    endSession(`⚠️ ${text}`);
+    setSessionFeedback(`⚠️ ${text}`, 8000);
+    return;
+  }
+
   if (msg.type === "hangup") {
     log("info", "Signaling", "Peer sent explicit hangup — ending session");
     endSession("Peer disconnected");
@@ -1264,6 +1272,14 @@ async function onControlMessage(msg) {
   // Handle it before the host's blocked-input guard so a resume always works.
   if (msg.t === "input-feedback") {
     applySharedInputPause(msg.paused, msg.source || "remote");
+    return;
+  }
+
+  if (msg.t === "force-stop") {
+    const text = msg.message || "Application forcefully stopped";
+    log("warn", "DataChannel", `Host forcefully stopped session: ${text}`);
+    endSession(`⚠️ ${text}`);
+    setSessionFeedback(`⚠️ ${text}`, 8000);
     return;
   }
 
@@ -1641,6 +1657,23 @@ if (inputStatePill) {
   };
 }
 
+let isTerminatingHost = false;
+async function handleHostForceStop() {
+  if (isTerminatingHost) return;
+  isTerminatingHost = true;
+  log("info", "Host", "Emergency termination initiated (Ctrl+Alt+;) — sending force-stop notification to controller");
+  try {
+    dcSend({ t: "force-stop", message: "Application forcefully stopped" });
+  } catch {}
+  try {
+    sendWs({ type: "force-stop", message: "Application forcefully stopped" });
+  } catch {}
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  if (window.deskly?.terminateApp) {
+    window.deskly.terminateApp();
+  }
+}
+
 window.deskly.onHotkey((name) => {
   // Global shortcuts fire on every machine. Only the host responds; the
   // controller uses the toolbar button.
@@ -1657,9 +1690,7 @@ window.deskly.onHotkey((name) => {
   if (name === "resume") hostResumeRemoteInput();
   if (name === "terminate") {
     log("info", "Host", "Host termination shortcut triggered");
-    if (window.deskly?.terminateApp) {
-      window.deskly.terminateApp();
-    }
+    handleHostForceStop();
   }
 });
 
@@ -1796,9 +1827,7 @@ window.addEventListener("keydown", (ev) => {
     if (ev.code === "Semicolon" || ev.key === ";") {
       ev.preventDefault();
       log("info", "Shortcut", "Window shortcut activated: Ctrl+Alt+;");
-      if (window.deskly?.terminateApp) {
-        window.deskly.terminateApp();
-      }
+      handleHostForceStop();
       return;
     }
   }
