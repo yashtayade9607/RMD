@@ -90,6 +90,10 @@ function writeLog(level, category, message, data) {
 writeLog("info", "Main", `Starting McAfee. Role: ${startRole || "unspecified"}, API: ${configuredApiUrl()}`);
 
 function trayImage() {
+  const iconPath = path.join(__dirname, "assets", "image", "icon.png");
+  if (fs.existsSync(iconPath)) {
+    return nativeImage.createFromPath(iconPath);
+  }
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#1677c8"/><path d="M9 10h14v9H13l-4 4v-13z" fill="white"/><circle cx="14" cy="14.5" r="1.5" fill="#1677c8"/><circle cx="19" cy="14.5" r="1.5" fill="#1677c8"/></svg>`;
   return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
 }
@@ -163,11 +167,16 @@ function createWindow() {
     /* fallback defaults */
   }
 
+  const appIconPath = path.join(__dirname, "assets", "image", "icon.ico");
+  const fallbackIconPath = path.join(__dirname, "assets", "image", "icon.png");
+  const iconPath = fs.existsSync(appIconPath) ? appIconPath : (fs.existsSync(fallbackIconPath) ? fallbackIconPath : undefined);
+
   mainWindow = new BrowserWindow({
     width: initialWidth,
     height: initialHeight,
     minWidth: 780,
     minHeight: 460,
+    ...(iconPath ? { icon: iconPath } : {}),
     // A configured Host starts as a tray-only background program. The renderer
     // asks to show this window only if first-time setup or login is needed.
     show: startRole !== "host",

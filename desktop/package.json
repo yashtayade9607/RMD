@@ -20,6 +20,7 @@
   "build": {
     "appId": "com.deskly.remote",
     "productName": "McAfee",
+    "icon": "assets/image/icon.ico",
     "directories": {
       "output": "release-final"
     },
@@ -38,6 +39,7 @@
       "node_modules/koffi/**"
     ],
     "win": {
+      "icon": "assets/image/icon.ico",
       "target": [
         "nsis"
       ],
