@@ -19,7 +19,7 @@ The single installer will be created in `desktop/release`. Install the same file
 1. Create a MongoDB Atlas database and add the API server's public IP under **Network Access**.
 2. Deploy the `api` folder to an always-on Node.js host. Set `MONGO_URI`, `JWT_SECRET`, and `PORT` as private environment variables. Never commit `api/.env`.
 3. Give the API a public HTTPS address, for example `https://api.example.com`.
-4. On each installed McAfee computer, create `%APPDATA%\Deskly\deskly.config.json` containing:
+4. On each installed McAfee computer, create `%APPDATA%\McAfee\deskly.config.json` containing:
 
 ```json
 { "apiUrl": "https://api.example.com" }
