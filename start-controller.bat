@@ -1,6 +1,6 @@
 @echo off
-title Deskly Controller
+title McAfee Controller
 cd /d "%~dp0desktop"
-echo Opening Deskly as the controller...
+echo Opening McAfee as the controller...
 call npm run controller
 pause

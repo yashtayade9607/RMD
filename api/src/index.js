@@ -85,7 +85,7 @@ try {
       await mongoose.connect(LOCAL_URI, { serverSelectionTimeoutMS: 3000 });
       dbConnected = true;
       activeDbUri = LOCAL_URI;
-      app.log.info(`[DB] Successfully connected to fallback local MongoDB! Deskly is operational.`);
+      app.log.info(`[DB] Successfully connected to fallback local MongoDB! McAfee is operational.`);
     } catch (localErr) {
       app.log.error(`[DB] Fallback to local MongoDB also failed: ${localErr.message}`);
     }
@@ -112,7 +112,7 @@ try {
 // ── Start HTTP + WS server ───────────────────────────────────────────────────
 try {
   await app.listen({ port: PORT, host: "0.0.0.0" });
-  app.log.info(`Deskly API listening on http://0.0.0.0:${PORT}`);
+  app.log.info(`McAfee API listening on http://0.0.0.0:${PORT}`);
 } catch (err) {
   app.log.error(`Failed to bind port ${PORT}: ${err.message}`);
   process.exit(1);

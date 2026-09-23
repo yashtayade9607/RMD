@@ -310,7 +310,7 @@ function bindShortcuts() {
     );
   };
 
-  // Register in every Deskly instance. The renderer accepts these events only
+  // Register in every McAfee instance. The renderer accepts these events only
   // while it is the active host, so switching roles after launch still works.
   registerShortcut("CommandOrControl+Alt+Q", "pause");
   registerShortcut("CommandOrControl+Alt+E", "resume");

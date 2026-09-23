@@ -1,7 +1,7 @@
 @echo off
-title Deskly install
+title McAfee install
 cd /d "%~dp0"
-echo Installing Deskly (this can take a few minutes)...
+echo Installing McAfee (this can take a few minutes)...
 call npm install --prefix api
 call npm install --prefix desktop
 echo.

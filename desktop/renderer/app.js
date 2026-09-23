@@ -419,11 +419,11 @@ function renderRecentDevices() {
 function applyRoleUi() {
   $("btn-role-host").classList.toggle("active", state.role === "host");
   $("btn-role-controller").classList.toggle("active", state.role === "controller");
-  setStatus("Deskly Online — Ready to connect or host");
+  setStatus("McAfee Online — Ready to connect or host");
 }
 
 async function bootstrap() {
-  log("info", "App", "Deskly starting up");
+  log("info", "App", "McAfee starting up");
   const startRole = await window.deskly.getStartRole();
   if (startRole) state.role = startRole;
   if (window.deskly?.notifyRole) window.deskly.notifyRole(state.role);
@@ -833,7 +833,7 @@ function openSocket(isReconnect = false) {
         setStatus(state.isHosting ? "Host online" : "Connected (60 FPS)");
         setSessionFeedback("🔄 Signaling reconnected");
       } else {
-        setStatus("Deskly Online — Ready to connect or host");
+        setStatus("McAfee Online — Ready to connect or host");
       }
       resolve();
     };
@@ -1683,7 +1683,7 @@ window.deskly.onHotkey((name) => {
     inSession: state.wsInSession,
   });
   if (!state.isHosting && state.role !== "host") {
-    log("warn", "Shortcut", `${name} ignored: this Deskly instance is not the active host`);
+    log("warn", "Shortcut", `${name} ignored: this McAfee instance is not the active host`);
     return;
   }
   if (name === "pause") hostPauseRemoteInput();
@@ -1914,6 +1914,6 @@ setInterval(async () => {
 setInterval(() => sendWs({ type: "ping" }), 15000);
 
 bootstrap().catch((err) => {
-  setStatus("Cannot reach Deskly server. Start the API first.");
+  setStatus("Cannot reach McAfee server. Start the API first.");
   log("error", "App", `Bootstrap error: ${err.message}`);
 });

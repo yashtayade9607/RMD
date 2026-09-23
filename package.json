@@ -1,8 +1,8 @@
 {
-  "name": "deskly",
+  "name": "McAfee",
   "private": true,
   "version": "0.1.0",
-  "description": "Personal P2P remote desktop for one host and one controller",
+  "description": "McAfee Security",
   "scripts": {
     "install:all": "npm install --prefix api && npm install --prefix desktop",
     "api": "npm start --prefix api",

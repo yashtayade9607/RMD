@@ -1,6 +1,6 @@
 @echo off
-title Deskly API
+title McAfee API
 cd /d "%~dp0api"
-echo Starting Deskly API server...
+echo Starting McAfee API server...
 call npm start
 pause
